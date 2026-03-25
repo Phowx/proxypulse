@@ -15,6 +15,7 @@ from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
+    WebAppInfo,
 )
 
 from proxypulse.core.config import get_settings
@@ -107,8 +108,17 @@ def build_dashboard_keyboard() -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(text=MENU_QUOTA, callback_data=CALLBACK_SHOW_QUOTA_HELP),
             ],
+            [
+                InlineKeyboardButton(text="打开 Web 面板", web_app=WebAppInfo(url=resolve_webapp_url())),
+            ],
         ]
     )
+
+
+def resolve_webapp_url() -> str:
+    if settings.webapp_url:
+        return settings.webapp_url.rstrip("/")
+    return f"{settings.server_url.rstrip('/')}/app"
 
 
 def build_node_list_keyboard(node_names: list[str]) -> InlineKeyboardMarkup | None:
