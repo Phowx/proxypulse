@@ -430,6 +430,7 @@ WEBAPP_HTML = """<!doctype html>
     const detailEl = document.getElementById('detail');
     const refreshBtn = document.getElementById('refresh');
     const statusClass = { '在线': 'online', '待接入': 'pending', '离线': 'offline' };
+    const searchParams = new URLSearchParams(window.location.search);
 
     let selectedNode = null;
     let latestNodes = [];
@@ -585,10 +586,17 @@ WEBAPP_HTML = """<!doctype html>
 
     async function api(path) {
       const initData = tg?.initData || '';
+      const headers = {
+        'X-Telegram-Init-Data': initData,
+      };
+      const fallbackUser = searchParams.get('uid');
+      const fallbackToken = searchParams.get('sig');
+      if (!initData && fallbackUser && fallbackToken) {
+        headers['X-ProxyPulse-Web-User'] = fallbackUser;
+        headers['X-ProxyPulse-Web-Token'] = fallbackToken;
+      }
       const response = await fetch(path, {
-        headers: {
-          'X-Telegram-Init-Data': initData,
-        },
+        headers,
       });
       if (!response.ok) {
         const text = await response.text();

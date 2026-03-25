@@ -4,6 +4,7 @@ import asyncio
 import html
 import logging
 from datetime import UTC, datetime
+from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot, Dispatcher, F, Router
@@ -22,6 +23,7 @@ from aiogram.types import (
 
 from proxypulse.core.config import get_settings
 from proxypulse.core.db import SessionLocal, init_db
+from proxypulse.core.webapp_auth import build_webapp_access_token
 from proxypulse.services.alerts import (
     format_alert_message,
     list_active_alerts,
@@ -107,8 +109,22 @@ def dashboard_button_rows(include_webapp: bool) -> list[list[str]]:
     return rows
 
 
-def build_dashboard_keyboard() -> ReplyKeyboardMarkup:
+def build_webapp_launch_url(user_id: int | None) -> str:
     webapp_url = resolve_webapp_url()
+    if user_id is None or not settings.bot_token:
+        return webapp_url
+    separator = "&" if "?" in webapp_url else "?"
+    query = urlencode(
+        {
+            "uid": str(user_id),
+            "sig": build_webapp_access_token(user_id, settings.bot_token),
+        }
+    )
+    return f"{webapp_url}{separator}{query}"
+
+
+def build_dashboard_keyboard(user_id: int | None = None) -> ReplyKeyboardMarkup:
+    webapp_url = build_webapp_launch_url(user_id)
     rows = []
     for row in dashboard_button_rows(is_supported_webapp_url(webapp_url)):
         buttons = []
@@ -406,7 +422,8 @@ def _parse_local_datetime(value: str) -> datetime:
 
 
 async def send_dashboard(message: Message) -> None:
-    await message.answer(build_dashboard_menu_text(), reply_markup=build_dashboard_keyboard())
+    user_id = message.from_user.id if message.from_user else None
+    await message.answer(build_dashboard_menu_text(), reply_markup=build_dashboard_keyboard(user_id))
 
 
 async def safe_edit_callback_message(callback: CallbackQuery, text: str, reply_markup: InlineKeyboardMarkup | None) -> None:
@@ -844,7 +861,8 @@ async def menu_callback_handler(callback: CallbackQuery) -> None:
         await callback.answer("无权访问。", show_alert=True)
         return
     if callback.message is not None:
-        await callback.message.answer(build_dashboard_menu_text(), reply_markup=build_dashboard_keyboard())
+        user_id = callback.from_user.id if callback.from_user else None
+        await callback.message.answer(build_dashboard_menu_text(), reply_markup=build_dashboard_keyboard(user_id))
     await callback.answer()
 
 

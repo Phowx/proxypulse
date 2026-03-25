@@ -17,6 +17,7 @@ from proxypulse.core.schemas import (
     NodeDetail,
     NodeSummary,
 )
+from proxypulse.core.webapp_auth import validate_webapp_access_token
 from proxypulse.services.alerts import list_active_alerts_for_node
 from proxypulse.services.dashboard import build_node_detail_summary, build_nodes_dashboard
 from proxypulse.services.nodes import (
@@ -55,11 +56,29 @@ def resolve_webapp_url() -> str:
     return f"{settings.server_url.rstrip('/')}/app"
 
 
-def require_webapp_admin(init_data: str | None) -> dict:
-    user = validate_telegram_webapp_init_data(init_data or "", settings.bot_token)
-    if user.get("id") not in settings.admin_telegram_ids:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden.")
-    return user
+def require_webapp_admin(
+    init_data: str | None,
+    fallback_user: str | None = None,
+    fallback_token: str | None = None,
+) -> dict:
+    if init_data:
+        user = validate_telegram_webapp_init_data(init_data, settings.bot_token)
+        if user.get("id") not in settings.admin_telegram_ids:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden.")
+        return user
+
+    if fallback_user and fallback_token and settings.bot_token:
+        try:
+            user_id = int(fallback_user)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid web app user.") from exc
+        if user_id not in settings.admin_telegram_ids:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden.")
+        if not validate_webapp_access_token(user_id, fallback_token, settings.bot_token):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid web app token.")
+        return {"id": user_id}
+
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing Telegram init data.")
 
 
 def webapp_status_label(node) -> str:
@@ -141,9 +160,11 @@ async def webapp_index() -> HTMLResponse:
 @app.get("/app/data/overview")
 async def webapp_overview(
     x_telegram_init_data: str | None = Header(default=None),
+    x_proxypulse_web_user: str | None = Header(default=None),
+    x_proxypulse_web_token: str | None = Header(default=None),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    require_webapp_admin(x_telegram_init_data)
+    require_webapp_admin(x_telegram_init_data, x_proxypulse_web_user, x_proxypulse_web_token)
     nodes = await list_nodes(session)
     overview, cards = await build_nodes_dashboard(session, nodes)
     detail_summaries = {node.name: await build_node_detail_summary(session, node) for node in nodes}
@@ -190,9 +211,11 @@ async def webapp_overview(
 async def webapp_node_detail(
     name: str,
     x_telegram_init_data: str | None = Header(default=None),
+    x_proxypulse_web_user: str | None = Header(default=None),
+    x_proxypulse_web_token: str | None = Header(default=None),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    require_webapp_admin(x_telegram_init_data)
+    require_webapp_admin(x_telegram_init_data, x_proxypulse_web_user, x_proxypulse_web_token)
     node = await get_node_by_name(session, name)
     if node is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Node not found.")

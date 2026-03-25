@@ -7,6 +7,7 @@ import urllib.parse
 from unittest import TestCase
 
 from proxypulse.api.webapp import validate_telegram_webapp_init_data
+from proxypulse.core.webapp_auth import build_webapp_access_token, validate_webapp_access_token
 
 
 def build_init_data(user: dict, bot_token: str) -> str:
@@ -29,3 +30,9 @@ class WebAppAuthTests(TestCase):
         parsed_user = validate_telegram_webapp_init_data(init_data, "123456:ABCDEF")
 
         self.assertEqual(parsed_user["id"], 123456789)
+
+    def test_validate_webapp_access_token(self) -> None:
+        token = build_webapp_access_token(123456789, "123456:ABCDEF")
+
+        self.assertTrue(validate_webapp_access_token(123456789, token, "123456:ABCDEF"))
+        self.assertFalse(validate_webapp_access_token(987654321, token, "123456:ABCDEF"))
