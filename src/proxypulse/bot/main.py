@@ -243,19 +243,64 @@ def format_network_counter_pair(left_value: int | None, right_value: int | None)
     return f"{format_integer_value(left_value)} / {format_integer_value(right_value)}"
 
 
-def render_section(title: str, rows: list[str]) -> list[str]:
-    return [f"── {title}", *rows]
-
-
-def render_bullet_section(title: str, rows: list[str]) -> list[str]:
-    rendered_rows = [f"• {row}" for row in rows if row]
-    return [f"── {title}", *rendered_rows]
-
-
 def format_alert_badge(count: int) -> str:
     if count <= 0:
         return "无活动告警"
     return f"{count} 条活动告警"
+
+
+def render_section(title: str, rows: list[str]) -> list[str]:
+    return [f"── {title}", *rows]
+
+
+def render_metric_pair(left_label: str, left_value: str, right_label: str, right_value: str) -> str:
+    return f"{left_label} {left_value}    {right_label} {right_value}"
+
+
+def render_metric_single(label: str, value: str) -> str:
+    return f"{label} {value}"
+
+
+def render_metric_block(title: str, rows: list[tuple[str, str, str | None, str | None]]) -> list[str]:
+    rendered = [f"── {title}"]
+    for left_label, left_value, right_label, right_value in rows:
+        if right_label is None or right_value is None:
+            rendered.append(render_metric_single(left_label, left_value))
+        else:
+            rendered.append(render_metric_pair(left_label, left_value, right_label, right_value))
+    return rendered
+
+
+def format_quota_compact_lines(status) -> list[tuple[str, str, str | None, str | None]]:
+    if not status.configured:
+        return [("套餐", "未配置", None, None)]
+
+    percent = f"{status.percent_used:.1f}%" if status.percent_used is not None else "暂无"
+    rows: list[tuple[str, str, str | None, str | None]] = [
+        ("上限", format_byte_value(status.limit_bytes), "已用", format_byte_value(status.used_bytes)),
+        ("剩余", format_byte_value(status.remaining_bytes), "进度", percent),
+        ("周期", status.cycle_description or "未配置", None, None),
+    ]
+    if status.period_start is not None and status.next_reset_at is not None:
+        rows.append(
+            (
+                "开始",
+                status.period_start.astimezone(ZoneInfo(settings.report_timezone)).strftime("%m-%d %H:%M"),
+                "重置",
+                status.next_reset_at.astimezone(ZoneInfo(settings.report_timezone)).strftime("%m-%d %H:%M"),
+            )
+        )
+    elif status.period_start is not None:
+        rows.append(
+            ("开始", status.period_start.astimezone(ZoneInfo(settings.report_timezone)).strftime("%m-%d %H:%M"), None, None)
+        )
+    elif status.next_reset_at is not None:
+        rows.append(
+            ("重置", status.next_reset_at.astimezone(ZoneInfo(settings.report_timezone)).strftime("%m-%d %H:%M"), None, None)
+        )
+    if status.calibration_bytes is not None:
+        rows.append(("校准", format_byte_value(status.calibration_bytes), None, None))
+    return rows
 
 
 def render_node_card(card) -> str:
@@ -265,26 +310,21 @@ def render_node_card(card) -> str:
         f"{node.name}",
         f"{format_status_label(node)} · {format_relative_time(node.last_seen_at)} · {format_network_interface_label(node.latest_network_interface)}",
         "",
-        *render_bullet_section(
+        *render_metric_block(
             "资源",
             [
-                f"CPU {format_metric_value(node.latest_cpu_percent)}",
-                f"内存 {format_metric_value(node.latest_memory_percent)}",
-                f"磁盘 {format_metric_value(node.latest_disk_percent)}",
+                ("CPU", format_metric_value(node.latest_cpu_percent), "内存", format_metric_value(node.latest_memory_percent)),
+                ("磁盘", format_metric_value(node.latest_disk_percent), "告警", format_alert_badge(card.active_alert_count)),
             ],
         ),
         "",
-        *render_bullet_section(
+        *render_metric_block(
             "流量",
             [
-                f"当前下行 {format_rate_value(card.current_rate.rx_bps)}",
-                f"当前上行 {format_rate_value(card.current_rate.tx_bps)}",
-                f"24h 下行 {format_byte_value(card.traffic_24h.rx_bytes)}",
-                f"24h 上行 {format_byte_value(card.traffic_24h.tx_bytes)}",
+                ("下行", format_rate_value(card.current_rate.rx_bps), "上行", format_rate_value(card.current_rate.tx_bps)),
+                ("24h↓", format_byte_value(card.traffic_24h.rx_bytes), "24h↑", format_byte_value(card.traffic_24h.tx_bytes)),
             ],
         ),
-        "",
-        *render_bullet_section("告警", [format_alert_badge(card.active_alert_count)]),
     ]
     return "\n".join(lines)
 
@@ -363,12 +403,12 @@ async def render_nodes_response() -> tuple[str, InlineKeyboardMarkup | None]:
     lines = [
         "📡 节点概览",
         "",
-        *render_bullet_section(
+        *render_metric_block(
             "总览",
             [
-                f"在线 {overview.online_count} / 离线 {overview.offline_count} / 待接入 {overview.pending_count}",
-                f"活动告警 {overview.active_alert_count}",
-                f"24h 总流量 {format_byte_value(overview.total_bytes_24h)}",
+                ("在线", str(overview.online_count), "离线", str(overview.offline_count)),
+                ("待接入", str(overview.pending_count), "告警", str(overview.active_alert_count)),
+                ("24h", format_byte_value(overview.total_bytes_24h), None, None),
             ],
         ),
     ]
@@ -391,70 +431,58 @@ async def render_node_detail(node_name: str) -> tuple[str, InlineKeyboardMarkup]
     if node is None:
         return "未找到对应节点。", build_single_action_keyboard(CALLBACK_SHOW_NODES)
 
-    quota_lines = format_quota_status(quota_status)
+    quota_lines = format_quota_compact_lines(quota_status)
     lines = [
         f"🖥️ 节点详情 | {node.name}",
         "",
-        f"{format_status_label(node)}",
-        f"最近上报  {format_relative_time(node.last_seen_at)}",
-        f"主网卡    {format_network_interface_label(node.latest_network_interface)}",
-        f"告警状态  {format_alert_badge(detail_summary.active_alert_count)}",
+        render_metric_pair("状态", format_status_label(node), "上报", format_relative_time(node.last_seen_at)),
+        render_metric_pair("网卡", format_network_interface_label(node.latest_network_interface), "告警", format_alert_badge(detail_summary.active_alert_count)),
         "",
-        *render_bullet_section(
+        *render_metric_block(
             "基础信息",
             [
-                f"主机名 {node.hostname or '未上报'}",
-                f"系统 {node.platform or '未上报'}",
-                f"IP {', '.join(node.ips) if node.ips else '未上报'}",
+                ("主机", node.hostname or "未上报", "系统", node.platform or "未上报"),
+                ("IP", ", ".join(node.ips) if node.ips else "未上报", None, None),
             ],
         ),
         "",
-        *render_bullet_section(
+        *render_metric_block(
             "实时状态",
             [
-                f"CPU {format_metric_value(node.latest_cpu_percent)}",
-                f"核心数 {format_integer_value(node.latest_cpu_count)}",
-                f"内存 {format_resource_usage(node.latest_memory_used_bytes, node.latest_memory_total_bytes, node.latest_memory_percent)}",
-                f"磁盘 {format_resource_usage(node.latest_disk_used_bytes, node.latest_disk_total_bytes, node.latest_disk_percent)}",
-                f"负载(1m) {node.latest_load_avg_1m:.2f}" if node.latest_load_avg_1m is not None else "负载(1m) 暂无",
-                f"运行时长 {format_uptime(node.latest_uptime_seconds)}",
+                ("CPU", format_metric_value(node.latest_cpu_percent), "核心", format_integer_value(node.latest_cpu_count)),
+                ("负载", f"{node.latest_load_avg_1m:.2f}" if node.latest_load_avg_1m is not None else "暂无", "运行", format_uptime(node.latest_uptime_seconds)),
+                ("内存", format_resource_usage(node.latest_memory_used_bytes, node.latest_memory_total_bytes, node.latest_memory_percent), None, None),
+                ("磁盘", format_resource_usage(node.latest_disk_used_bytes, node.latest_disk_total_bytes, node.latest_disk_percent), None, None),
             ],
         ),
         "",
-        *render_bullet_section(
+        *render_metric_block(
             "网络流量",
             [
-                f"当前下行 {format_rate_value(detail_summary.current_rate.rx_bps)}",
-                f"当前上行 {format_rate_value(detail_summary.current_rate.tx_bps)}",
-                f"累计下行 {format_byte_value(node.latest_rx_bytes)}",
-                f"累计上行 {format_byte_value(node.latest_tx_bytes)}",
-                f"接收包数 {format_integer_value(node.latest_rx_packets)}",
-                f"发送包数 {format_integer_value(node.latest_tx_packets)}",
-                f"RX 错误/丢包 {format_network_counter_pair(node.latest_rx_errors, node.latest_rx_dropped)}",
-                f"TX 错误/丢包 {format_network_counter_pair(node.latest_tx_errors, node.latest_tx_dropped)}",
+                ("下行", format_rate_value(detail_summary.current_rate.rx_bps), "上行", format_rate_value(detail_summary.current_rate.tx_bps)),
+                ("累计↓", format_byte_value(node.latest_rx_bytes), "累计↑", format_byte_value(node.latest_tx_bytes)),
+                ("收包", format_integer_value(node.latest_rx_packets), "发包", format_integer_value(node.latest_tx_packets)),
+                ("RX错/丢", format_network_counter_pair(node.latest_rx_errors, node.latest_rx_dropped), "TX错/丢", format_network_counter_pair(node.latest_tx_errors, node.latest_tx_dropped)),
             ],
         ),
         "",
-        *render_bullet_section(
+        *render_metric_block(
             "近 1 小时趋势",
             [
-                f"CPU {format_avg_peak(detail_summary.trend_1h.avg_cpu_percent, detail_summary.trend_1h.peak_cpu_percent)}",
-                f"内存 {format_avg_peak(detail_summary.trend_1h.avg_memory_percent, detail_summary.trend_1h.peak_memory_percent)}",
-                f"磁盘 {format_avg_peak(detail_summary.trend_1h.avg_disk_percent, detail_summary.trend_1h.peak_disk_percent)}",
-                f"下行流量 {format_byte_value(detail_summary.trend_1h.rx_bytes)}",
-                f"上行流量 {format_byte_value(detail_summary.trend_1h.tx_bytes)}",
-                f"样本数 {detail_summary.trend_1h.sample_count}",
+                ("CPU", format_avg_peak(detail_summary.trend_1h.avg_cpu_percent, detail_summary.trend_1h.peak_cpu_percent), None, None),
+                ("内存", format_avg_peak(detail_summary.trend_1h.avg_memory_percent, detail_summary.trend_1h.peak_memory_percent), None, None),
+                ("磁盘", format_avg_peak(detail_summary.trend_1h.avg_disk_percent, detail_summary.trend_1h.peak_disk_percent), None, None),
+                ("1h↓", format_byte_value(detail_summary.trend_1h.rx_bytes), "1h↑", format_byte_value(detail_summary.trend_1h.tx_bytes)),
+                ("样本", str(detail_summary.trend_1h.sample_count), None, None),
             ],
         ),
         "",
-        *render_bullet_section(
-            "近 24 小时 / 套餐 / 告警",
+        *render_metric_block(
+            "近 24 小时 / 套餐",
             [
-                f"24h 下行 {format_byte_value(detail_summary.traffic_24h.rx_bytes)}",
-                f"24h 上行 {format_byte_value(detail_summary.traffic_24h.tx_bytes)}",
-                f"24h 合计 {format_byte_value(detail_summary.traffic_24h.total_bytes)}",
+                ("24h↓", format_byte_value(detail_summary.traffic_24h.rx_bytes), "24h↑", format_byte_value(detail_summary.traffic_24h.tx_bytes)),
+                ("24h合计", format_byte_value(detail_summary.traffic_24h.total_bytes), None, None),
                 *quota_lines,
-                format_alert_badge(detail_summary.active_alert_count),
             ],
         ),
     ]
@@ -462,7 +490,7 @@ async def render_node_detail(node_name: str) -> tuple[str, InlineKeyboardMarkup]
         lines.extend(["", "── 当前告警"])
         for alert in active_alerts:
             severity_icon = "⛔" if alert.severity == "critical" else "⚠️"
-            lines.append(f"• {severity_icon} {alert.summary}")
+            lines.append(f"{severity_icon} {alert.summary}")
     return "\n".join(lines), build_node_detail_keyboard(node.name)
 
 
@@ -495,15 +523,19 @@ async def render_alerts_response() -> tuple[str, InlineKeyboardMarkup]:
     if not active_alerts:
         return "🚨 告警中心\n当前没有活动告警。", build_single_action_keyboard(CALLBACK_SHOW_ALERTS)
 
-    lines = ["🚨 告警中心", "", f"当前共有 {len(active_alerts)} 条活动告警"]
+    lines = [
+        "🚨 告警中心",
+        "",
+        *render_metric_block("总览", [("活动告警", str(len(active_alerts)), None, None)]),
+    ]
     for alert, node in active_alerts:
         severity = "严重" if alert.severity == "critical" else "警告"
         severity_icon = "⛔" if alert.severity == "critical" else "⚠️"
         lines.append(
             f"━━━━━━━━━━\n"
             f"{severity_icon} {node.name}\n"
-            f"级别  {severity}\n"
-            f"摘要  {alert.summary}"
+            f"{render_metric_pair('级别', severity, '状态', format_status_label(node))}\n"
+            f"摘要 {alert.summary}"
         )
     return "\n".join(lines), build_single_action_keyboard(CALLBACK_SHOW_ALERTS)
 
@@ -526,7 +558,7 @@ async def render_quota_response(node_name: str) -> str:
         if node is None:
             raise QuotaServiceError("未找到对应节点。")
         status = await get_quota_status(session, node)
-    return "\n".join([f"🧾 套餐状态 | {node_name}", *format_quota_status(status)])
+    return "\n".join([f"🧾 套餐状态 | {node_name}", "", *render_metric_block("套餐", format_quota_compact_lines(status))])
 
 
 @router.message(Command("start"))
