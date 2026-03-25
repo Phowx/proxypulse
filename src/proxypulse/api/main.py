@@ -62,6 +62,61 @@ def require_webapp_admin(init_data: str | None) -> dict:
     return user
 
 
+def webapp_status_label(node) -> str:
+    if node.is_online:
+        return "在线"
+    if node.status.value == "pending":
+        return "待接入"
+    return "离线"
+
+
+def webapp_network_interface(value: str | None) -> str:
+    if not value:
+        return "暂无"
+    if value == "aggregate":
+        return "汇总"
+    return value
+
+
+def webapp_bytes(value: int | None) -> str:
+    if value is None:
+        return "暂无"
+    return format_bytes(value)
+
+
+def webapp_rate(value: float | None) -> str:
+    if value is None:
+        return "暂无"
+    return f"{format_bytes(max(int(value), 0))}/s"
+
+
+def webapp_count(value: int | None) -> str:
+    if value is None:
+        return "暂无"
+    return f"{value:,}"
+
+
+def webapp_uptime(value: int | None) -> str:
+    if value is None:
+        return "暂无"
+    days, remainder = divmod(value, 86400)
+    hours, remainder = divmod(remainder, 3600)
+    minutes = remainder // 60
+    if days > 0:
+        return f"{days}d {hours}h"
+    if hours > 0:
+        return f"{hours}h {minutes}m"
+    return f"{minutes}m"
+
+
+def webapp_resource_usage(used_bytes: int | None, total_bytes: int | None, percent: float | None) -> str:
+    if used_bytes is not None and total_bytes is not None:
+        return f"{format_bytes(used_bytes)} / {format_bytes(total_bytes)} ({format_metric_value(percent)})"
+    if percent is not None:
+        return format_metric_value(percent)
+    return "暂无"
+
+
 @app.get("/health")
 async def healthcheck() -> dict[str, str]:
     return {"status": "ok"}
@@ -95,26 +150,33 @@ async def webapp_overview(
     return {
         "webapp_url": resolve_webapp_url(),
         "overview": {
+            "node_count": len(nodes),
             "online_count": overview.online_count,
             "offline_count": overview.offline_count,
             "pending_count": overview.pending_count,
             "active_alert_count": overview.active_alert_count,
+            "total_down_24h": format_bytes(overview.total_rx_bytes_24h),
+            "total_up_24h": format_bytes(overview.total_tx_bytes_24h),
             "total_traffic_24h": format_bytes(overview.total_bytes_24h),
         },
         "nodes": [
             {
                 "name": card.node.name,
-                "status_label": "🟢 在线" if card.node.is_online else ("🟡 待接入" if card.node.status.value == "pending" else "🔴 离线"),
+                "status_label": webapp_status_label(card.node),
                 "last_seen": format_relative_time(card.node.last_seen_at),
-                "network_interface": card.node.latest_network_interface or "暂无",
+                "hostname": card.node.hostname or "未上报",
+                "platform": card.node.platform or "未上报",
+                "network_interface": webapp_network_interface(card.node.latest_network_interface),
                 "alert_badge": f"{card.active_alert_count} 条告警" if card.active_alert_count else "无告警",
                 "cpu": format_metric_value(card.node.latest_cpu_percent),
                 "memory": format_metric_value(card.node.latest_memory_percent),
                 "disk": format_metric_value(card.node.latest_disk_percent),
-                "rx_rate": f"{format_bytes(max(int(card.current_rate.rx_bps or 0), 0))}/s" if card.current_rate.rx_bps is not None else "暂无",
-                "tx_rate": f"{format_bytes(max(int(card.current_rate.tx_bps or 0), 0))}/s" if card.current_rate.tx_bps is not None else "暂无",
+                "uptime": webapp_uptime(card.node.latest_uptime_seconds),
+                "rx_rate": webapp_rate(card.current_rate.rx_bps),
+                "tx_rate": webapp_rate(card.current_rate.tx_bps),
                 "rx_24h": format_bytes(card.traffic_24h.rx_bytes),
                 "tx_24h": format_bytes(card.traffic_24h.tx_bytes),
+                "total_24h": format_bytes(card.traffic_24h.total_bytes),
                 "traffic_1h": format_bytes(
                     detail_summaries[card.node.name].trend_1h.rx_bytes + detail_summaries[card.node.name].trend_1h.tx_bytes
                 ),
@@ -150,16 +212,27 @@ async def webapp_node_detail(
 
     return {
         "name": node.name,
-        "status_label": "🟢 在线" if node.is_online else ("🟡 待接入" if node.status.value == "pending" else "🔴 离线"),
+        "status_label": webapp_status_label(node),
         "last_seen": format_relative_time(node.last_seen_at),
-        "network_interface": node.latest_network_interface or "暂无",
+        "hostname": node.hostname or "未上报",
+        "platform": node.platform or "未上报",
+        "ips": ", ".join(node.ips) if node.ips else "未上报",
+        "uptime": webapp_uptime(node.latest_uptime_seconds),
+        "network_interface": webapp_network_interface(node.latest_network_interface),
         "alert_badge": f"{detail_summary.active_alert_count} 条告警" if detail_summary.active_alert_count else "无告警",
+        "highlights": [
+            {"label": "24h 合计", "value": format_bytes(detail_summary.traffic_24h.total_bytes)},
+            {"label": "当前下行", "value": webapp_rate(detail_summary.current_rate.rx_bps)},
+            {"label": "当前上行", "value": webapp_rate(detail_summary.current_rate.tx_bps)},
+            {"label": "在线时长", "value": webapp_uptime(node.latest_uptime_seconds)},
+        ],
         "sections": [
             {
                 "title": "基础信息",
                 "items": [
                     {"label": "主机", "value": node.hostname or "未上报", "full": False},
-                    {"label": "系统", "value": node.platform or "未上报", "full": False},
+                    {"label": "接口", "value": webapp_network_interface(node.latest_network_interface), "full": False},
+                    {"label": "系统", "value": node.platform or "未上报", "full": True},
                     {"label": "IP", "value": ", ".join(node.ips) if node.ips else "未上报", "full": True},
                 ],
             },
@@ -167,24 +240,24 @@ async def webapp_node_detail(
                 "title": "实时状态",
                 "items": [
                     {"label": "CPU", "value": format_metric_value(node.latest_cpu_percent), "full": False},
-                    {"label": "核心", "value": str(node.latest_cpu_count or "暂无"), "full": False},
+                    {"label": "核心", "value": webapp_count(node.latest_cpu_count), "full": False},
                     {"label": "负载", "value": f"{node.latest_load_avg_1m:.2f}" if node.latest_load_avg_1m is not None else "暂无", "full": False},
-                    {"label": "运行", "value": f"{node.latest_uptime_seconds or 0}s" if node.latest_uptime_seconds is not None else "暂无", "full": False},
-                    {"label": "内存", "value": f"{format_bytes(node.latest_memory_used_bytes or 0)} / {format_bytes(node.latest_memory_total_bytes or 0)} ({format_metric_value(node.latest_memory_percent)})" if node.latest_memory_used_bytes is not None and node.latest_memory_total_bytes is not None else format_metric_value(node.latest_memory_percent), "full": True},
-                    {"label": "磁盘", "value": f"{format_bytes(node.latest_disk_used_bytes or 0)} / {format_bytes(node.latest_disk_total_bytes or 0)} ({format_metric_value(node.latest_disk_percent)})" if node.latest_disk_used_bytes is not None and node.latest_disk_total_bytes is not None else format_metric_value(node.latest_disk_percent), "full": True},
+                    {"label": "运行", "value": webapp_uptime(node.latest_uptime_seconds), "full": False},
+                    {"label": "内存", "value": webapp_resource_usage(node.latest_memory_used_bytes, node.latest_memory_total_bytes, node.latest_memory_percent), "full": True},
+                    {"label": "磁盘", "value": webapp_resource_usage(node.latest_disk_used_bytes, node.latest_disk_total_bytes, node.latest_disk_percent), "full": True},
                 ],
             },
             {
                 "title": "网络流量",
                 "items": [
-                    {"label": "下行", "value": f"{format_bytes(max(int(detail_summary.current_rate.rx_bps or 0), 0))}/s" if detail_summary.current_rate.rx_bps is not None else "暂无", "full": False},
-                    {"label": "上行", "value": f"{format_bytes(max(int(detail_summary.current_rate.tx_bps or 0), 0))}/s" if detail_summary.current_rate.tx_bps is not None else "暂无", "full": False},
-                    {"label": "累计下行", "value": format_bytes(node.latest_rx_bytes or 0), "full": False},
-                    {"label": "累计上行", "value": format_bytes(node.latest_tx_bytes or 0), "full": False},
-                    {"label": "收包", "value": f"{node.latest_rx_packets or 0:,}", "full": False},
-                    {"label": "发包", "value": f"{node.latest_tx_packets or 0:,}", "full": False},
-                    {"label": "RX 错/丢", "value": f"{node.latest_rx_errors or 0:,} / {node.latest_rx_dropped or 0:,}", "full": False},
-                    {"label": "TX 错/丢", "value": f"{node.latest_tx_errors or 0:,} / {node.latest_tx_dropped or 0:,}", "full": False},
+                    {"label": "下行", "value": webapp_rate(detail_summary.current_rate.rx_bps), "full": False},
+                    {"label": "上行", "value": webapp_rate(detail_summary.current_rate.tx_bps), "full": False},
+                    {"label": "累计下行", "value": webapp_bytes(node.latest_rx_bytes), "full": False},
+                    {"label": "累计上行", "value": webapp_bytes(node.latest_tx_bytes), "full": False},
+                    {"label": "收包", "value": webapp_count(node.latest_rx_packets), "full": False},
+                    {"label": "发包", "value": webapp_count(node.latest_tx_packets), "full": False},
+                    {"label": "RX 错/丢", "value": f"{webapp_count(node.latest_rx_errors)} / {webapp_count(node.latest_rx_dropped)}", "full": False},
+                    {"label": "TX 错/丢", "value": f"{webapp_count(node.latest_tx_errors)} / {webapp_count(node.latest_tx_dropped)}", "full": False},
                 ],
             },
             {

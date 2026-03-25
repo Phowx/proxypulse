@@ -14,7 +14,9 @@ from aiogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    KeyboardButton,
     Message,
+    ReplyKeyboardMarkup,
     WebAppInfo,
 )
 
@@ -66,6 +68,7 @@ MENU_ALERTS = "告警中心"
 MENU_TRAFFIC = "24h 流量"
 MENU_DAILY = "流量日报"
 MENU_QUOTA = "流量套餐"
+MENU_WEBAPP = "Web 面板"
 CALLBACK_SHOW_NODES = "show:nodes"
 CALLBACK_SHOW_ALERTS = "show:alerts"
 CALLBACK_SHOW_TRAFFIC = "show:traffic"
@@ -94,24 +97,33 @@ async def reject_if_not_admin(message: Message) -> bool:
     return True
 
 
-def build_dashboard_keyboard() -> InlineKeyboardMarkup:
+def dashboard_button_rows(include_webapp: bool) -> list[list[str]]:
     rows = [
-        [
-            InlineKeyboardButton(text=MENU_NODES, callback_data=CALLBACK_SHOW_NODES),
-            InlineKeyboardButton(text=MENU_ALERTS, callback_data=CALLBACK_SHOW_ALERTS),
-        ],
-        [
-            InlineKeyboardButton(text=MENU_TRAFFIC, callback_data=CALLBACK_SHOW_TRAFFIC),
-            InlineKeyboardButton(text=MENU_DAILY, callback_data=CALLBACK_SHOW_DAILY),
-        ],
-        [
-            InlineKeyboardButton(text=MENU_QUOTA, callback_data=CALLBACK_SHOW_QUOTA_HELP),
-        ],
+        [MENU_NODES, MENU_ALERTS, MENU_TRAFFIC],
+        [MENU_DAILY, MENU_QUOTA],
     ]
+    if include_webapp:
+        rows[1].append(MENU_WEBAPP)
+    return rows
+
+
+def build_dashboard_keyboard() -> ReplyKeyboardMarkup:
     webapp_url = resolve_webapp_url()
-    if is_supported_webapp_url(webapp_url):
-        rows.append([InlineKeyboardButton(text="打开 Web 面板", web_app=WebAppInfo(url=webapp_url))])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+    rows = []
+    for row in dashboard_button_rows(is_supported_webapp_url(webapp_url)):
+        buttons = []
+        for label in row:
+            if label == MENU_WEBAPP:
+                buttons.append(KeyboardButton(text=label, web_app=WebAppInfo(url=webapp_url)))
+            else:
+                buttons.append(KeyboardButton(text=label))
+        rows.append(buttons)
+    return ReplyKeyboardMarkup(
+        keyboard=rows,
+        resize_keyboard=True,
+        is_persistent=True,
+        input_field_placeholder="选择入口或输入命令",
+    )
 
 
 def resolve_webapp_url() -> str:
@@ -125,7 +137,7 @@ def is_supported_webapp_url(url: str) -> bool:
 
 
 def build_dashboard_menu_text() -> str:
-    return "ProxyPulse 控制台\n\n选择下方入口继续。"
+    return "ProxyPulse 控制台已就绪。"
 
 
 def build_node_list_keyboard(node_names: list[str]) -> InlineKeyboardMarkup | None:
@@ -394,11 +406,7 @@ def _parse_local_datetime(value: str) -> datetime:
 
 
 async def send_dashboard(message: Message) -> None:
-    await message.answer(
-        render_panel(build_dashboard_menu_text()),
-        parse_mode="HTML",
-        reply_markup=build_dashboard_keyboard(),
-    )
+    await message.answer(build_dashboard_menu_text(), reply_markup=build_dashboard_keyboard())
 
 
 async def safe_edit_callback_message(callback: CallbackQuery, text: str, reply_markup: InlineKeyboardMarkup | None) -> None:
@@ -592,6 +600,33 @@ async def start_handler(message: Message) -> None:
 @router.message(Command("menu"))
 async def menu_handler(message: Message) -> None:
     await start_handler(message)
+
+
+@router.message(F.text == MENU_NODES)
+async def menu_nodes_handler(message: Message) -> None:
+    await nodes_handler(message)
+
+
+@router.message(F.text == MENU_ALERTS)
+async def menu_alerts_handler(message: Message) -> None:
+    await alerts_handler(message)
+
+
+@router.message(F.text == MENU_TRAFFIC)
+async def menu_traffic_handler(message: Message) -> None:
+    await traffic_handler(message)
+
+
+@router.message(F.text == MENU_DAILY)
+async def menu_daily_handler(message: Message) -> None:
+    await daily_handler(message)
+
+
+@router.message(F.text == MENU_QUOTA)
+async def menu_quota_help_handler(message: Message) -> None:
+    if await reject_if_not_admin(message):
+        return
+    await message.answer("\n".join(render_quota_help_lines()))
 
 
 @router.message(Command("enroll"))
@@ -809,11 +844,7 @@ async def menu_callback_handler(callback: CallbackQuery) -> None:
         await callback.answer("无权访问。", show_alert=True)
         return
     if callback.message is not None:
-        await callback.message.answer(
-            render_panel(build_dashboard_menu_text()),
-            parse_mode="HTML",
-            reply_markup=build_dashboard_keyboard(),
-        )
+        await callback.message.answer(build_dashboard_menu_text(), reply_markup=build_dashboard_keyboard())
     await callback.answer()
 
 
