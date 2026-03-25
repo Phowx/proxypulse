@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import logging
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
@@ -59,11 +60,11 @@ settings = get_settings()
 router = Router()
 logger = logging.getLogger(__name__)
 
-MENU_NODES = "节点"
-MENU_ALERTS = "告警"
-MENU_TRAFFIC = "24h"
-MENU_DAILY = "日报"
-MENU_QUOTA = "套餐"
+MENU_NODES = "节点概览"
+MENU_ALERTS = "告警中心"
+MENU_TRAFFIC = "24h 流量"
+MENU_DAILY = "流量日报"
+MENU_QUOTA = "流量套餐"
 CALLBACK_SHOW_NODES = "show:nodes"
 CALLBACK_SHOW_ALERTS = "show:alerts"
 CALLBACK_SHOW_TRAFFIC = "show:traffic"
@@ -98,11 +99,13 @@ def build_dashboard_keyboard() -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(text=MENU_NODES, callback_data=CALLBACK_SHOW_NODES),
                 InlineKeyboardButton(text=MENU_ALERTS, callback_data=CALLBACK_SHOW_ALERTS),
-                InlineKeyboardButton(text=MENU_QUOTA, callback_data=CALLBACK_SHOW_QUOTA_HELP),
             ],
             [
                 InlineKeyboardButton(text=MENU_TRAFFIC, callback_data=CALLBACK_SHOW_TRAFFIC),
                 InlineKeyboardButton(text=MENU_DAILY, callback_data=CALLBACK_SHOW_DAILY),
+            ],
+            [
+                InlineKeyboardButton(text=MENU_QUOTA, callback_data=CALLBACK_SHOW_QUOTA_HELP),
             ],
         ]
     )
@@ -253,7 +256,7 @@ def render_section(title: str, rows: list[str]) -> list[str]:
 
 def render_metric_pair(left_label: str, left_value: str, right_label: str, right_value: str) -> str:
     left_cell = f"{left_label} {left_value}"
-    padding = " " * max(18 - len(left_cell), 0)
+    padding = " " * max(26 - len(left_cell), 0)
     return f"{left_cell}{padding}  │  {right_label} {right_value}"
 
 
@@ -301,6 +304,10 @@ def format_quota_compact_lines(status) -> list[tuple[str, str, str | None, str |
     if status.calibration_bytes is not None:
         rows.append(("校准", format_byte_value(status.calibration_bytes), None, None))
     return rows
+
+
+def render_panel(text: str) -> str:
+    return f"<pre>{html.escape(text)}</pre>"
 
 
 def render_node_card(card) -> str:
@@ -371,11 +378,16 @@ def _parse_local_datetime(value: str) -> datetime:
 
 async def send_dashboard(message: Message) -> None:
     await message.answer(
-        "✨ ProxyPulse 控制台\n"
-        "可直接使用下方菜单，也可以点击本消息里的快捷按钮。",
+        render_panel(
+            "ProxyPulse 控制台\n\n"
+            "可直接使用下方菜单，\n"
+            "也可以点击本消息里的快捷入口。"
+        ),
+        parse_mode="HTML",
     )
     await message.answer(
-        "⚡ 快捷入口",
+        render_panel("快捷入口"),
+        parse_mode="HTML",
         reply_markup=build_dashboard_keyboard(),
     )
 
@@ -385,7 +397,7 @@ async def safe_edit_callback_message(callback: CallbackQuery, text: str, reply_m
         await callback.answer()
         return
     try:
-        await callback.message.edit_text(text, reply_markup=reply_markup)
+        await callback.message.edit_text(render_panel(text), parse_mode="HTML", reply_markup=reply_markup)
     except TelegramBadRequest as exc:
         if "message is not modified" not in str(exc).lower():
             raise
@@ -611,7 +623,7 @@ async def nodes_handler(message: Message) -> None:
     if await reject_if_not_admin(message):
         return
     text, keyboard = await render_nodes_response()
-    await message.answer(text, reply_markup=keyboard)
+    await message.answer(render_panel(text), parse_mode="HTML", reply_markup=keyboard)
 
 
 @router.message(Command("node"))
@@ -624,7 +636,7 @@ async def node_handler(message: Message, command: CommandObject) -> None:
         return
 
     text, keyboard = await render_node_detail(node_name)
-    await message.answer(text, reply_markup=keyboard)
+    await message.answer(render_panel(text), parse_mode="HTML", reply_markup=keyboard)
 
 
 @router.message(Command("delete_node"))
@@ -636,7 +648,7 @@ async def delete_node_handler(message: Message, command: CommandObject) -> None:
         await message.answer("用法：/delete_node <节点名>")
         return
     text, keyboard = await render_node_delete_confirm(node_name)
-    await message.answer(text, reply_markup=keyboard)
+    await message.answer(render_panel(text), parse_mode="HTML", reply_markup=keyboard)
 
 
 @router.message(Command("alerts"))
@@ -644,7 +656,7 @@ async def alerts_handler(message: Message) -> None:
     if await reject_if_not_admin(message):
         return
     text, keyboard = await render_alerts_response()
-    await message.answer(text, reply_markup=keyboard)
+    await message.answer(render_panel(text), parse_mode="HTML", reply_markup=keyboard)
 
 
 @router.message(Command("traffic"))
@@ -652,7 +664,7 @@ async def traffic_handler(message: Message) -> None:
     if await reject_if_not_admin(message):
         return
     text, keyboard = await render_traffic_response()
-    await message.answer(text, reply_markup=keyboard)
+    await message.answer(render_panel(text), parse_mode="HTML", reply_markup=keyboard)
 
 
 @router.message(Command("daily"))
@@ -660,7 +672,7 @@ async def daily_handler(message: Message) -> None:
     if await reject_if_not_admin(message):
         return
     text, keyboard = await render_daily_response()
-    await message.answer(text, reply_markup=keyboard)
+    await message.answer(render_panel(text), parse_mode="HTML", reply_markup=keyboard)
 
 
 @router.message(Command("quota"))
@@ -669,10 +681,10 @@ async def quota_handler(message: Message, command: CommandObject) -> None:
         return
     node_name = (command.args or "").strip()
     if not node_name:
-        await message.answer("\n".join(render_quota_help_lines()))
+        await message.answer(render_panel("\n".join(render_quota_help_lines())), parse_mode="HTML")
         return
     try:
-        await message.answer(await render_quota_response(node_name))
+        await message.answer(render_panel(await render_quota_response(node_name)), parse_mode="HTML")
     except QuotaServiceError as exc:
         await message.answer(str(exc))
 
@@ -789,7 +801,8 @@ async def menu_callback_handler(callback: CallbackQuery) -> None:
         return
     if callback.message is not None:
         await callback.message.answer(
-            "⚡ 快捷入口",
+            render_panel("快捷入口"),
+            parse_mode="HTML",
             reply_markup=build_dashboard_keyboard(),
         )
     await callback.answer()
