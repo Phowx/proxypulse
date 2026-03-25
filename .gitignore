@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+proxypulse.db
+agent-state.json

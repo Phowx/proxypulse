@@ -1,0 +1,16 @@
+[Unit]
+Description=ProxyPulse API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=__WORKDIR__
+EnvironmentFile=__ENV_FILE__
+ExecStart=__PYTHON__ -m proxypulse.api
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+
