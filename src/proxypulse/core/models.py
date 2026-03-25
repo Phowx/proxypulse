@@ -21,6 +21,11 @@ class AlertStatus(str, enum.Enum):
     resolved = "resolved"
 
 
+class TrafficQuotaCycle(str, enum.Enum):
+    monthly = "monthly"
+    interval_days = "interval_days"
+
+
 class Node(Base):
     __tablename__ = "nodes"
 
@@ -40,6 +45,16 @@ class Node(Base):
     latest_load_avg_1m: Mapped[float | None] = mapped_column(Float, nullable=True)
     latest_rx_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     latest_tx_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    traffic_quota_limit_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    traffic_quota_cycle_type: Mapped[TrafficQuotaCycle | None] = mapped_column(Enum(TrafficQuotaCycle), nullable=True)
+    traffic_quota_reset_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    traffic_quota_interval_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    traffic_quota_anchor_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    traffic_quota_reset_hour: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    traffic_quota_reset_minute: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    traffic_quota_calibrated_usage_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    traffic_quota_calibrated_total_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    traffic_quota_calibrated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
