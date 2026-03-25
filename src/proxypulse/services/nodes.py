@@ -133,3 +133,13 @@ async def list_nodes(session: AsyncSession) -> list[Node]:
 async def get_node_by_name(session: AsyncSession, name: str) -> Node | None:
     result = await session.execute(select(Node).where(Node.name == name))
     return result.scalar_one_or_none()
+
+
+async def delete_node_by_name(session: AsyncSession, name: str) -> Node:
+    node = await get_node_by_name(session, name)
+    if node is None:
+        raise NodeServiceError("未找到对应节点。")
+
+    await session.delete(node)
+    await session.commit()
+    return node

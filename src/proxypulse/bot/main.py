@@ -25,7 +25,13 @@ from proxypulse.services.alerts import (
     mark_notified,
     mark_stale_nodes_offline,
 )
-from proxypulse.services.nodes import NodeServiceError, create_or_refresh_enrollment, get_node_by_name, list_nodes
+from proxypulse.services.nodes import (
+    NodeServiceError,
+    create_or_refresh_enrollment,
+    delete_node_by_name,
+    get_node_by_name,
+    list_nodes,
+)
 from proxypulse.services.quota import (
     QuotaServiceError,
     calibrate_quota_usage,
@@ -62,6 +68,9 @@ CALLBACK_SHOW_DAILY = "show:daily"
 CALLBACK_SHOW_QUOTA_HELP = "show:quota_help"
 CALLBACK_SHOW_MENU = "show:menu"
 CALLBACK_NODE_PREFIX = "node:"
+CALLBACK_NODE_DELETE_PREFIX = "node_delete:"
+CALLBACK_NODE_DELETE_CONFIRM_PREFIX = "node_delete_confirm:"
+CALLBACK_NODE_DELETE_CANCEL_PREFIX = "node_delete_cancel:"
 STATUS_STYLE = {
     "online": ("🟢", "在线"),
     "pending": ("🟡", "待接入"),
@@ -111,8 +120,21 @@ def build_node_detail_keyboard(node_name: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="刷新详情", callback_data=f"{CALLBACK_NODE_PREFIX}{node_name}")],
+            [InlineKeyboardButton(text="🗑️ 删除节点", callback_data=f"{CALLBACK_NODE_DELETE_PREFIX}{node_name}")],
             [InlineKeyboardButton(text="返回节点列表", callback_data=CALLBACK_SHOW_NODES)],
             [InlineKeyboardButton(text="返回菜单", callback_data=CALLBACK_SHOW_MENU)],
+        ]
+    )
+
+
+def build_node_delete_confirm_keyboard(node_name: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="确认删除", callback_data=f"{CALLBACK_NODE_DELETE_CONFIRM_PREFIX}{node_name}"),
+                InlineKeyboardButton(text="取消", callback_data=f"{CALLBACK_NODE_DELETE_CANCEL_PREFIX}{node_name}"),
+            ],
+            [InlineKeyboardButton(text="返回节点列表", callback_data=CALLBACK_SHOW_NODES)],
         ]
     )
 
@@ -274,6 +296,26 @@ async def render_node_detail(node_name: str) -> tuple[str, InlineKeyboardMarkup]
     return "\n".join(lines), build_node_detail_keyboard(node.name)
 
 
+async def render_node_delete_confirm(node_name: str) -> tuple[str, InlineKeyboardMarkup]:
+    async with SessionLocal() as session:
+        node = await get_node_by_name(session, node_name)
+    if node is None:
+        return "未找到对应节点。", build_single_action_keyboard(CALLBACK_SHOW_NODES)
+    lines = [
+        f"🗑️ 删除节点 | {node.name}",
+        "",
+        "此操作会删除该节点及其关联数据：",
+        "• 历史指标快照",
+        "• 告警记录",
+        "• 流量套餐配置",
+        "",
+        "删除后，如果该机器上的 Agent 仍在运行，会因令牌失效而上报失败。",
+        "",
+        "确认删除吗？",
+    ]
+    return "\n".join(lines), build_node_delete_confirm_keyboard(node.name)
+
+
 async def render_alerts_response() -> tuple[str, InlineKeyboardMarkup]:
     async with SessionLocal() as session:
         await mark_stale_nodes_offline(session)
@@ -380,6 +422,18 @@ async def node_handler(message: Message, command: CommandObject) -> None:
         return
 
     text, keyboard = await render_node_detail(node_name)
+    await message.answer(text, reply_markup=keyboard)
+
+
+@router.message(Command("delete_node"))
+async def delete_node_handler(message: Message, command: CommandObject) -> None:
+    if await reject_if_not_admin(message):
+        return
+    node_name = (command.args or "").strip()
+    if not node_name:
+        await message.answer("用法：/delete_node <节点名>")
+        return
+    text, keyboard = await render_node_delete_confirm(node_name)
     await message.answer(text, reply_markup=keyboard)
 
 
@@ -597,6 +651,44 @@ async def show_node_callback(callback: CallbackQuery) -> None:
     await safe_edit_callback_message(callback, text, keyboard)
 
 
+@router.callback_query(F.data.startswith(CALLBACK_NODE_DELETE_PREFIX))
+async def show_node_delete_confirm_callback(callback: CallbackQuery) -> None:
+    if not callback.from_user or callback.from_user.id not in settings.admin_telegram_ids:
+        await callback.answer("无权访问。", show_alert=True)
+        return
+    node_name = callback.data[len(CALLBACK_NODE_DELETE_PREFIX) :]
+    text, keyboard = await render_node_delete_confirm(node_name)
+    await safe_edit_callback_message(callback, text, keyboard)
+
+
+@router.callback_query(F.data.startswith(CALLBACK_NODE_DELETE_CONFIRM_PREFIX))
+async def delete_node_confirm_callback(callback: CallbackQuery) -> None:
+    if not callback.from_user or callback.from_user.id not in settings.admin_telegram_ids:
+        await callback.answer("无权访问。", show_alert=True)
+        return
+    node_name = callback.data[len(CALLBACK_NODE_DELETE_CONFIRM_PREFIX) :]
+    try:
+        async with SessionLocal() as session:
+            node = await delete_node_by_name(session, node_name)
+    except NodeServiceError as exc:
+        await safe_edit_callback_message(callback, str(exc), build_single_action_keyboard(CALLBACK_SHOW_NODES))
+        return
+    text, keyboard = await render_nodes_response()
+    if callback.message is not None:
+        await callback.message.answer(f"✅ 已删除节点：{node.name}")
+    await safe_edit_callback_message(callback, text, keyboard)
+
+
+@router.callback_query(F.data.startswith(CALLBACK_NODE_DELETE_CANCEL_PREFIX))
+async def cancel_node_delete_callback(callback: CallbackQuery) -> None:
+    if not callback.from_user or callback.from_user.id not in settings.admin_telegram_ids:
+        await callback.answer("无权访问。", show_alert=True)
+        return
+    node_name = callback.data[len(CALLBACK_NODE_DELETE_CANCEL_PREFIX) :]
+    text, keyboard = await render_node_detail(node_name)
+    await safe_edit_callback_message(callback, text, keyboard)
+
+
 async def maybe_send_daily_report(bot: Bot) -> None:
     local_now = datetime.now(ZoneInfo(settings.report_timezone))
     if not should_send_daily_report(local_now):
@@ -652,6 +744,7 @@ async def run_polling() -> None:
             BotCommand(command="enroll", description="生成节点接入令牌"),
             BotCommand(command="nodes", description="查看节点列表"),
             BotCommand(command="node", description="查看节点详情"),
+            BotCommand(command="delete_node", description="删除节点并清理数据"),
             BotCommand(command="alerts", description="查看活动告警"),
             BotCommand(command="traffic", description="查看近24小时流量"),
             BotCommand(command="daily", description="查看前一日流量日报"),
