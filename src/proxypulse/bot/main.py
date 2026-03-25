@@ -59,11 +59,11 @@ settings = get_settings()
 router = Router()
 logger = logging.getLogger(__name__)
 
-MENU_NODES = "节点列表"
-MENU_ALERTS = "告警中心"
-MENU_TRAFFIC = "24小时流量"
-MENU_DAILY = "流量日报"
-MENU_QUOTA = "流量套餐"
+MENU_NODES = "节点"
+MENU_ALERTS = "告警"
+MENU_TRAFFIC = "24h"
+MENU_DAILY = "日报"
+MENU_QUOTA = "套餐"
 CALLBACK_SHOW_NODES = "show:nodes"
 CALLBACK_SHOW_ALERTS = "show:alerts"
 CALLBACK_SHOW_TRAFFIC = "show:traffic"
@@ -98,13 +98,11 @@ def build_dashboard_keyboard() -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(text=MENU_NODES, callback_data=CALLBACK_SHOW_NODES),
                 InlineKeyboardButton(text=MENU_ALERTS, callback_data=CALLBACK_SHOW_ALERTS),
+                InlineKeyboardButton(text=MENU_QUOTA, callback_data=CALLBACK_SHOW_QUOTA_HELP),
             ],
             [
                 InlineKeyboardButton(text=MENU_TRAFFIC, callback_data=CALLBACK_SHOW_TRAFFIC),
                 InlineKeyboardButton(text=MENU_DAILY, callback_data=CALLBACK_SHOW_DAILY),
-            ],
-            [
-                InlineKeyboardButton(text=MENU_QUOTA, callback_data=CALLBACK_SHOW_QUOTA_HELP),
             ],
         ]
     )
@@ -254,7 +252,9 @@ def render_section(title: str, rows: list[str]) -> list[str]:
 
 
 def render_metric_pair(left_label: str, left_value: str, right_label: str, right_value: str) -> str:
-    return f"{left_label} {left_value}    {right_label} {right_value}"
+    left_cell = f"{left_label} {left_value}"
+    padding = " " * max(18 - len(left_cell), 0)
+    return f"{left_cell}{padding}  │  {right_label} {right_value}"
 
 
 def render_metric_single(label: str, value: str) -> str:
