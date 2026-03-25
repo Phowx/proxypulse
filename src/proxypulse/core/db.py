@@ -28,9 +28,25 @@ async def init_db() -> None:
 
 
 async def _migrate_sqlite_schema(conn) -> None:
-    result = await conn.execute(text("PRAGMA table_info(nodes)"))
-    existing_columns = {row[1] for row in result.fetchall()}
-    required_columns = {
+    await _ensure_sqlite_columns(
+        conn,
+        "nodes",
+        {
+            "latest_cpu_count": "ALTER TABLE nodes ADD COLUMN latest_cpu_count INTEGER",
+            "latest_uptime_seconds": "ALTER TABLE nodes ADD COLUMN latest_uptime_seconds INTEGER",
+            "latest_memory_total_bytes": "ALTER TABLE nodes ADD COLUMN latest_memory_total_bytes INTEGER",
+            "latest_memory_used_bytes": "ALTER TABLE nodes ADD COLUMN latest_memory_used_bytes INTEGER",
+            "latest_disk_total_bytes": "ALTER TABLE nodes ADD COLUMN latest_disk_total_bytes INTEGER",
+            "latest_disk_used_bytes": "ALTER TABLE nodes ADD COLUMN latest_disk_used_bytes INTEGER",
+            "latest_network_interface": "ALTER TABLE nodes ADD COLUMN latest_network_interface VARCHAR(64)",
+            "latest_rx_packets": "ALTER TABLE nodes ADD COLUMN latest_rx_packets INTEGER",
+            "latest_tx_packets": "ALTER TABLE nodes ADD COLUMN latest_tx_packets INTEGER",
+            "latest_rx_errors": "ALTER TABLE nodes ADD COLUMN latest_rx_errors INTEGER",
+            "latest_tx_errors": "ALTER TABLE nodes ADD COLUMN latest_tx_errors INTEGER",
+            "latest_rx_dropped": "ALTER TABLE nodes ADD COLUMN latest_rx_dropped INTEGER",
+            "latest_tx_dropped": "ALTER TABLE nodes ADD COLUMN latest_tx_dropped INTEGER",
+        }
+        | {
         "traffic_quota_limit_bytes": "ALTER TABLE nodes ADD COLUMN traffic_quota_limit_bytes INTEGER",
         "traffic_quota_cycle_type": "ALTER TABLE nodes ADD COLUMN traffic_quota_cycle_type VARCHAR(32)",
         "traffic_quota_reset_day": "ALTER TABLE nodes ADD COLUMN traffic_quota_reset_day INTEGER",
@@ -41,7 +57,32 @@ async def _migrate_sqlite_schema(conn) -> None:
         "traffic_quota_calibrated_usage_bytes": "ALTER TABLE nodes ADD COLUMN traffic_quota_calibrated_usage_bytes INTEGER",
         "traffic_quota_calibrated_total_bytes": "ALTER TABLE nodes ADD COLUMN traffic_quota_calibrated_total_bytes INTEGER",
         "traffic_quota_calibrated_at": "ALTER TABLE nodes ADD COLUMN traffic_quota_calibrated_at DATETIME",
-    }
+        },
+    )
+
+    await _ensure_sqlite_columns(
+        conn,
+        "metric_snapshots",
+        {
+            "cpu_count": "ALTER TABLE metric_snapshots ADD COLUMN cpu_count INTEGER",
+            "memory_total_bytes": "ALTER TABLE metric_snapshots ADD COLUMN memory_total_bytes INTEGER",
+            "memory_used_bytes": "ALTER TABLE metric_snapshots ADD COLUMN memory_used_bytes INTEGER",
+            "disk_total_bytes": "ALTER TABLE metric_snapshots ADD COLUMN disk_total_bytes INTEGER",
+            "disk_used_bytes": "ALTER TABLE metric_snapshots ADD COLUMN disk_used_bytes INTEGER",
+            "network_interface": "ALTER TABLE metric_snapshots ADD COLUMN network_interface VARCHAR(64)",
+            "rx_packets": "ALTER TABLE metric_snapshots ADD COLUMN rx_packets INTEGER",
+            "tx_packets": "ALTER TABLE metric_snapshots ADD COLUMN tx_packets INTEGER",
+            "rx_errors": "ALTER TABLE metric_snapshots ADD COLUMN rx_errors INTEGER",
+            "tx_errors": "ALTER TABLE metric_snapshots ADD COLUMN tx_errors INTEGER",
+            "rx_dropped": "ALTER TABLE metric_snapshots ADD COLUMN rx_dropped INTEGER",
+            "tx_dropped": "ALTER TABLE metric_snapshots ADD COLUMN tx_dropped INTEGER",
+        },
+    )
+
+
+async def _ensure_sqlite_columns(conn, table_name: str, required_columns: dict[str, str]) -> None:
+    result = await conn.execute(text(f"PRAGMA table_info({table_name})"))
+    existing_columns = {row[1] for row in result.fetchall()}
     for column_name, ddl in required_columns.items():
         if column_name not in existing_columns:
             await conn.execute(text(ddl))

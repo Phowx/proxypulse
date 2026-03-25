@@ -4,6 +4,7 @@ import os
 import socket
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -28,6 +29,7 @@ class Settings(BaseSettings):
     agent_state_path: Path = Path("./agent-state.json")
     agent_enrollment_token: str = ""
     network_interface: str = ""
+    network_interface_strategy: Literal["auto", "fixed", "aggregate"] = "auto"
     request_timeout_seconds: float = 10.0
     offline_after_seconds: int = 90
     alert_scan_interval_seconds: int = 30

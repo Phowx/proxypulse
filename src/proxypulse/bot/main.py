@@ -21,10 +21,12 @@ from proxypulse.core.db import SessionLocal, init_db
 from proxypulse.services.alerts import (
     format_alert_message,
     list_active_alerts,
+    list_active_alerts_for_node,
     list_pending_notifications,
     mark_notified,
     mark_stale_nodes_offline,
 )
+from proxypulse.services.dashboard import build_node_detail_summary, build_nodes_dashboard
 from proxypulse.services.nodes import (
     NodeServiceError,
     create_or_refresh_enrollment,
@@ -44,6 +46,7 @@ from proxypulse.services.quota import (
     parse_used_gib,
 )
 from proxypulse.services.reports import (
+    format_bytes,
     format_traffic_summary,
     has_daily_report_run,
     mark_daily_report_run,
@@ -165,40 +168,92 @@ def format_metric_value(value: float | None, suffix: str = "%") -> str:
     return f"{value:.1f}{suffix}"
 
 
-def format_counter_value(value: int | None) -> str:
+def format_byte_value(value: int | None) -> str:
     if value is None:
         return "暂无"
-    if value >= 1024**4:
-        return f"{value / 1024**4:.2f} TB"
-    if value >= 1024**3:
-        return f"{value / 1024**3:.2f} GB"
-    if value >= 1024**2:
-        return f"{value / 1024**2:.2f} MB"
-    if value >= 1024:
-        return f"{value / 1024:.2f} KB"
-    return f"{value} B"
+    return format_bytes(value)
 
 
-def render_node_lines(node) -> list[str]:
-    return [
-        f"🖥️ 节点详情 | {node.name}",
-        f"{format_status_label(node)}",
-        "",
-        "📌 基础信息",
-        f"主机名：{node.hostname or '未上报'}",
-        f"系统：{node.platform or '未上报'}",
-        f"IP：{', '.join(node.ips) if node.ips else '未上报'}",
-        "",
-        "📊 资源概览",
-        f"CPU：{format_metric_value(node.latest_cpu_percent)}",
-        f"内存：{format_metric_value(node.latest_memory_percent)}",
-        f"磁盘：{format_metric_value(node.latest_disk_percent)}",
-        f"负载(1m)：{node.latest_load_avg_1m if node.latest_load_avg_1m is not None else '暂无'}",
-        "",
-        "🌐 累计流量",
-        f"下行：{format_counter_value(node.latest_rx_bytes)}",
-        f"上行：{format_counter_value(node.latest_tx_bytes)}",
-    ]
+def format_integer_value(value: int | None) -> str:
+    if value is None:
+        return "暂无"
+    return f"{value:,}"
+
+
+def format_rate_value(value: float | None) -> str:
+    if value is None:
+        return "暂无"
+    return f"{format_bytes(max(int(value), 0))}/s"
+
+
+def format_network_interface_label(value: str | None) -> str:
+    if not value:
+        return "暂无"
+    if value == "aggregate":
+        return "汇总"
+    return value
+
+
+def format_relative_time(value: datetime | None) -> str:
+    if value is None:
+        return "暂无"
+    aware_value = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    delta_seconds = max(int((datetime.now(UTC) - aware_value.astimezone(UTC)).total_seconds()), 0)
+    if delta_seconds < 60:
+        return f"{delta_seconds}s前"
+    if delta_seconds < 3600:
+        return f"{delta_seconds // 60}m前"
+    if delta_seconds < 86400:
+        hours, remainder = divmod(delta_seconds, 3600)
+        minutes = remainder // 60
+        return f"{hours}h{minutes}m前"
+    days, remainder = divmod(delta_seconds, 86400)
+    hours = remainder // 3600
+    return f"{days}d{hours}h前"
+
+
+def format_uptime(value: int | None) -> str:
+    if value is None:
+        return "暂无"
+    days, remainder = divmod(value, 86400)
+    hours, remainder = divmod(remainder, 3600)
+    minutes = remainder // 60
+    if days > 0:
+        return f"{days}d {hours}h"
+    if hours > 0:
+        return f"{hours}h {minutes}m"
+    return f"{minutes}m"
+
+
+def format_avg_peak(avg_value: float | None, peak_value: float | None) -> str:
+    return f"均值 {format_metric_value(avg_value)} | 峰值 {format_metric_value(peak_value)}"
+
+
+def format_resource_usage(used_bytes: int | None, total_bytes: int | None, percent: float | None) -> str:
+    if used_bytes is not None and total_bytes is not None:
+        return f"{format_byte_value(used_bytes)} / {format_byte_value(total_bytes)} ({format_metric_value(percent)})"
+    if percent is not None:
+        return format_metric_value(percent)
+    return "暂无"
+
+
+def format_network_counter_pair(left_value: int | None, right_value: int | None) -> str:
+    if left_value is None and right_value is None:
+        return "暂无"
+    return f"{format_integer_value(left_value)} / {format_integer_value(right_value)}"
+
+
+def render_node_card(card) -> str:
+    node = card.node
+    alert_suffix = f" | 🚨 {card.active_alert_count}" if card.active_alert_count else ""
+    return (
+        "━━━━━━━━━━\n"
+        f"{format_status_label(node)} {node.name}{alert_suffix}\n"
+        f"⏱️ {format_relative_time(node.last_seen_at)} | 网卡 {format_network_interface_label(node.latest_network_interface)}\n"
+        f"📊 CPU {format_metric_value(node.latest_cpu_percent)} | 内存 {format_metric_value(node.latest_memory_percent)} | 磁盘 {format_metric_value(node.latest_disk_percent)}\n"
+        f"🚦 ↓ {format_rate_value(card.current_rate.rx_bps)} | ↑ {format_rate_value(card.current_rate.tx_bps)}\n"
+        f"📦 24h ↓ {format_byte_value(card.traffic_24h.rx_bytes)} | ↑ {format_byte_value(card.traffic_24h.tx_bytes)}"
+    )
 
 
 def render_quota_help_lines() -> list[str]:
@@ -267,32 +322,81 @@ async def safe_edit_callback_message(callback: CallbackQuery, text: str, reply_m
 async def render_nodes_response() -> tuple[str, InlineKeyboardMarkup | None]:
     async with SessionLocal() as session:
         nodes = await list_nodes(session)
+        overview, cards = await build_nodes_dashboard(session, nodes)
 
     if not nodes:
-        return "🖥️ 节点列表\n当前还没有接入任何节点。", build_single_action_keyboard(CALLBACK_SHOW_NODES)
+        return "📡 节点概览\n当前还没有接入任何节点。", build_single_action_keyboard(CALLBACK_SHOW_NODES)
 
-    lines = ["🖥️ 节点列表"]
-    for node in nodes:
-        cpu = format_metric_value(node.latest_cpu_percent)
-        memory = format_metric_value(node.latest_memory_percent)
-        disk = format_metric_value(node.latest_disk_percent)
-        lines.append(
-            f"━━━━━━━━━━\n"
-            f"{format_status_label(node)} {node.name}\n"
-            f"📊 CPU {cpu} | 内存 {memory}\n"
-            f"💽 磁盘 {disk}"
-        )
+    lines = [
+        "📡 节点概览",
+        f"在线 {overview.online_count} | 离线 {overview.offline_count} | 待接入 {overview.pending_count}",
+        f"活动告警 {overview.active_alert_count} | 24h 总流量 {format_byte_value(overview.total_bytes_24h)}",
+    ]
+    for card in cards:
+        lines.append(render_node_card(card))
     return "\n".join(lines), build_node_list_keyboard([node.name for node in nodes])
 
 
 async def render_node_detail(node_name: str) -> tuple[str, InlineKeyboardMarkup]:
     async with SessionLocal() as session:
         node = await get_node_by_name(session, node_name)
-        quota_status = await get_quota_status(session, node) if node is not None else None
+        if node is None:
+            quota_status = None
+            detail_summary = None
+            active_alerts = []
+        else:
+            quota_status = await get_quota_status(session, node)
+            detail_summary = await build_node_detail_summary(session, node)
+            active_alerts = await list_active_alerts_for_node(session, node.id)
     if node is None:
         return "未找到对应节点。", build_single_action_keyboard(CALLBACK_SHOW_NODES)
-    lines = render_node_lines(node)
-    lines.extend(["", *format_quota_status(quota_status)])
+
+    lines = [
+        f"🖥️ 节点详情 | {node.name}",
+        f"{format_status_label(node)} | 最后上报 {format_relative_time(node.last_seen_at)}",
+        "",
+        "📌 基础信息",
+        f"主机名：{node.hostname or '未上报'}",
+        f"系统：{node.platform or '未上报'}",
+        f"IP：{', '.join(node.ips) if node.ips else '未上报'}",
+        f"主网卡：{format_network_interface_label(node.latest_network_interface)}",
+        "",
+        "⚙️ 实时状态",
+        f"CPU：{format_metric_value(node.latest_cpu_percent)} | 核心：{format_integer_value(node.latest_cpu_count)}",
+        f"内存：{format_resource_usage(node.latest_memory_used_bytes, node.latest_memory_total_bytes, node.latest_memory_percent)}",
+        f"磁盘：{format_resource_usage(node.latest_disk_used_bytes, node.latest_disk_total_bytes, node.latest_disk_percent)}",
+        f"负载(1m)：{node.latest_load_avg_1m:.2f}" if node.latest_load_avg_1m is not None else "负载(1m)：暂无",
+        f"运行时长：{format_uptime(node.latest_uptime_seconds)}",
+        "",
+        "🌐 网络流量",
+        f"当前速率：↓ {format_rate_value(detail_summary.current_rate.rx_bps)} | ↑ {format_rate_value(detail_summary.current_rate.tx_bps)}",
+        f"累计流量：↓ {format_byte_value(node.latest_rx_bytes)} | ↑ {format_byte_value(node.latest_tx_bytes)}",
+        f"累计包数：↓ {format_integer_value(node.latest_rx_packets)} | ↑ {format_integer_value(node.latest_tx_packets)}",
+        (
+            f"错误/丢包：RX {format_network_counter_pair(node.latest_rx_errors, node.latest_rx_dropped)}"
+            f" | TX {format_network_counter_pair(node.latest_tx_errors, node.latest_tx_dropped)}"
+        ),
+        "",
+        "📈 近 1 小时趋势",
+        f"CPU：{format_avg_peak(detail_summary.trend_1h.avg_cpu_percent, detail_summary.trend_1h.peak_cpu_percent)}",
+        f"内存：{format_avg_peak(detail_summary.trend_1h.avg_memory_percent, detail_summary.trend_1h.peak_memory_percent)}",
+        f"磁盘：{format_avg_peak(detail_summary.trend_1h.avg_disk_percent, detail_summary.trend_1h.peak_disk_percent)}",
+        f"流量：↓ {format_byte_value(detail_summary.trend_1h.rx_bytes)} | ↑ {format_byte_value(detail_summary.trend_1h.tx_bytes)}",
+        f"样本数：{detail_summary.trend_1h.sample_count}",
+        "",
+        "🧾 近 24 小时 / 套餐 / 告警",
+        (
+            f"24h 流量：↓ {format_byte_value(detail_summary.traffic_24h.rx_bytes)}"
+            f" | ↑ {format_byte_value(detail_summary.traffic_24h.tx_bytes)}"
+            f" | 合计 {format_byte_value(detail_summary.traffic_24h.total_bytes)}"
+        ),
+        *format_quota_status(quota_status),
+        f"活动告警：{detail_summary.active_alert_count}",
+    ]
+    if active_alerts:
+        for alert in active_alerts:
+            severity_icon = "⛔" if alert.severity == "critical" else "⚠️"
+            lines.append(f"{severity_icon} {alert.summary}")
     return "\n".join(lines), build_node_detail_keyboard(node.name)
 
 

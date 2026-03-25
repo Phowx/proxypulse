@@ -93,10 +93,22 @@ async def record_metrics(session: AsyncSession, node: Node, payload: MetricSnaps
         node_id=node.id,
         cpu_percent=payload.cpu_percent,
         memory_percent=payload.memory_percent,
+        memory_total_bytes=payload.memory_total_bytes,
+        memory_used_bytes=payload.memory_used_bytes,
         disk_percent=payload.disk_percent,
+        disk_total_bytes=payload.disk_total_bytes,
+        disk_used_bytes=payload.disk_used_bytes,
         load_avg_1m=payload.load_avg_1m,
+        cpu_count=payload.cpu_count,
+        network_interface=payload.network_interface,
         rx_bytes=payload.rx_bytes,
         tx_bytes=payload.tx_bytes,
+        rx_packets=payload.rx_packets,
+        tx_packets=payload.tx_packets,
+        rx_errors=payload.rx_errors,
+        tx_errors=payload.tx_errors,
+        rx_dropped=payload.rx_dropped,
+        tx_dropped=payload.tx_dropped,
         uptime_seconds=payload.uptime_seconds,
         raw_payload=json.dumps(payload.model_dump()),
     )
@@ -109,8 +121,21 @@ async def record_metrics(session: AsyncSession, node: Node, payload: MetricSnaps
     node.latest_memory_percent = payload.memory_percent
     node.latest_disk_percent = payload.disk_percent
     node.latest_load_avg_1m = payload.load_avg_1m
+    node.latest_cpu_count = payload.cpu_count
+    node.latest_uptime_seconds = payload.uptime_seconds
+    node.latest_memory_total_bytes = payload.memory_total_bytes
+    node.latest_memory_used_bytes = payload.memory_used_bytes
+    node.latest_disk_total_bytes = payload.disk_total_bytes
+    node.latest_disk_used_bytes = payload.disk_used_bytes
+    node.latest_network_interface = payload.network_interface
     node.latest_rx_bytes = payload.rx_bytes
     node.latest_tx_bytes = payload.tx_bytes
+    node.latest_rx_packets = payload.rx_packets
+    node.latest_tx_packets = payload.tx_packets
+    node.latest_rx_errors = payload.rx_errors
+    node.latest_tx_errors = payload.tx_errors
+    node.latest_rx_dropped = payload.rx_dropped
+    node.latest_tx_dropped = payload.tx_dropped
     await resolve_offline_alert(session, node)
     await sync_threshold_alerts(
         session,

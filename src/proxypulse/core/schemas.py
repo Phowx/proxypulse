@@ -34,10 +34,22 @@ class HeartbeatRequest(BaseModel):
 class MetricSnapshotIn(BaseModel):
     cpu_percent: float
     memory_percent: float
+    memory_total_bytes: int | None = None
+    memory_used_bytes: int | None = None
     disk_percent: float
+    disk_total_bytes: int | None = None
+    disk_used_bytes: int | None = None
     load_avg_1m: float
+    cpu_count: int | None = None
+    network_interface: str | None = None
     rx_bytes: int
     tx_bytes: int
+    rx_packets: int | None = None
+    tx_packets: int | None = None
+    rx_errors: int | None = None
+    tx_errors: int | None = None
+    rx_dropped: int | None = None
+    tx_dropped: int | None = None
     uptime_seconds: int
 
 
@@ -55,8 +67,21 @@ class NodeSummary(BaseModel):
     latest_memory_percent: float | None
     latest_disk_percent: float | None
     latest_load_avg_1m: float | None
+    latest_cpu_count: int | None
+    latest_uptime_seconds: int | None
+    latest_memory_total_bytes: int | None
+    latest_memory_used_bytes: int | None
+    latest_disk_total_bytes: int | None
+    latest_disk_used_bytes: int | None
+    latest_network_interface: str | None
     latest_rx_bytes: int | None
     latest_tx_bytes: int | None
+    latest_rx_packets: int | None
+    latest_tx_packets: int | None
+    latest_rx_errors: int | None
+    latest_tx_errors: int | None
+    latest_rx_dropped: int | None
+    latest_tx_dropped: int | None
 
 
 class NodeDetail(NodeSummary):

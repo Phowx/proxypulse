@@ -93,17 +93,29 @@ async def post_heartbeat(client: httpx.AsyncClient, token: str) -> None:
 
 
 async def post_metrics(client: httpx.AsyncClient, token: str) -> None:
-    metrics = collect_metrics(settings.network_interface)
+    metrics = collect_metrics(settings.network_interface, settings.network_interface_strategy)
     response = await client.post(
         f"{settings.server_url}/agent/metrics",
         headers={"Authorization": f"Bearer {token}"},
         json={
             "cpu_percent": metrics.cpu_percent,
             "memory_percent": metrics.memory_percent,
+            "memory_total_bytes": metrics.memory_total_bytes,
+            "memory_used_bytes": metrics.memory_used_bytes,
             "disk_percent": metrics.disk_percent,
+            "disk_total_bytes": metrics.disk_total_bytes,
+            "disk_used_bytes": metrics.disk_used_bytes,
             "load_avg_1m": metrics.load_avg_1m,
+            "cpu_count": metrics.cpu_count,
+            "network_interface": metrics.network_interface,
             "rx_bytes": metrics.rx_bytes,
             "tx_bytes": metrics.tx_bytes,
+            "rx_packets": metrics.rx_packets,
+            "tx_packets": metrics.tx_packets,
+            "rx_errors": metrics.rx_errors,
+            "tx_errors": metrics.tx_errors,
+            "rx_dropped": metrics.rx_dropped,
+            "tx_dropped": metrics.tx_dropped,
             "uptime_seconds": metrics.uptime_seconds,
         },
     )

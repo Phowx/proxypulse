@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from proxypulse.core.config import get_settings
@@ -207,6 +207,34 @@ async def list_active_alerts(session: AsyncSession, limit: int = 20) -> list[tup
         .limit(limit)
     )
     return list(result.all())
+
+
+async def count_active_alerts_by_node(session: AsyncSession, node_ids: list[str]) -> dict[str, int]:
+    if not node_ids:
+        return {}
+
+    result = await session.execute(
+        select(AlertEvent.node_id, func.count(AlertEvent.id))
+        .where(
+            AlertEvent.node_id.in_(node_ids),
+            AlertEvent.status == AlertStatus.active,
+        )
+        .group_by(AlertEvent.node_id)
+    )
+    return {node_id: count for node_id, count in result.all()}
+
+
+async def list_active_alerts_for_node(session: AsyncSession, node_id: str, limit: int = 5) -> list[AlertEvent]:
+    result = await session.execute(
+        select(AlertEvent)
+        .where(
+            AlertEvent.node_id == node_id,
+            AlertEvent.status == AlertStatus.active,
+        )
+        .order_by(AlertEvent.triggered_at.desc())
+        .limit(limit)
+    )
+    return list(result.scalars().all())
 
 
 async def list_pending_notifications(session: AsyncSession, limit: int = 20) -> list[tuple[AlertEvent, Node]]:
