@@ -4,11 +4,15 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest import TestCase
 
-from proxypulse.bot.main import render_node_card
+from proxypulse.bot.main import is_supported_webapp_url, render_node_card
 from proxypulse.services.dashboard import NodeCardSummary, NodeRateSummary, NodeTrafficWindowSummary
 
 
 class BotFormattingTests(TestCase):
+    def test_webapp_button_requires_https(self) -> None:
+        self.assertTrue(is_supported_webapp_url("https://example.com/app"))
+        self.assertFalse(is_supported_webapp_url("http://example.com/app"))
+
     def test_render_node_card_handles_missing_values(self) -> None:
         node = SimpleNamespace(
             name="hk-01",

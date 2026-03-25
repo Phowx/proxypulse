@@ -95,30 +95,33 @@ async def reject_if_not_admin(message: Message) -> bool:
 
 
 def build_dashboard_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text=MENU_NODES, callback_data=CALLBACK_SHOW_NODES),
-                InlineKeyboardButton(text=MENU_ALERTS, callback_data=CALLBACK_SHOW_ALERTS),
-            ],
-            [
-                InlineKeyboardButton(text=MENU_TRAFFIC, callback_data=CALLBACK_SHOW_TRAFFIC),
-                InlineKeyboardButton(text=MENU_DAILY, callback_data=CALLBACK_SHOW_DAILY),
-            ],
-            [
-                InlineKeyboardButton(text=MENU_QUOTA, callback_data=CALLBACK_SHOW_QUOTA_HELP),
-            ],
-            [
-                InlineKeyboardButton(text="打开 Web 面板", web_app=WebAppInfo(url=resolve_webapp_url())),
-            ],
-        ]
-    )
+    rows = [
+        [
+            InlineKeyboardButton(text=MENU_NODES, callback_data=CALLBACK_SHOW_NODES),
+            InlineKeyboardButton(text=MENU_ALERTS, callback_data=CALLBACK_SHOW_ALERTS),
+        ],
+        [
+            InlineKeyboardButton(text=MENU_TRAFFIC, callback_data=CALLBACK_SHOW_TRAFFIC),
+            InlineKeyboardButton(text=MENU_DAILY, callback_data=CALLBACK_SHOW_DAILY),
+        ],
+        [
+            InlineKeyboardButton(text=MENU_QUOTA, callback_data=CALLBACK_SHOW_QUOTA_HELP),
+        ],
+    ]
+    webapp_url = resolve_webapp_url()
+    if is_supported_webapp_url(webapp_url):
+        rows.append([InlineKeyboardButton(text="打开 Web 面板", web_app=WebAppInfo(url=webapp_url))])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def resolve_webapp_url() -> str:
     if settings.webapp_url:
         return settings.webapp_url.rstrip("/")
     return f"{settings.server_url.rstrip('/')}/app"
+
+
+def is_supported_webapp_url(url: str) -> bool:
+    return url.lower().startswith("https://")
 
 
 def build_node_list_keyboard(node_names: list[str]) -> InlineKeyboardMarkup | None:
