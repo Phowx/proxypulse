@@ -136,28 +136,29 @@ async def summarize_previous_local_day(session: AsyncSession, today_local: date 
 def format_traffic_summary(summary: TrafficSummary) -> str:
     lines = [
         f"📈 {summary.title}",
+        "",
+        "── 总览",
         (
-            f"时间：{summary.start_at.astimezone(_local_tz()).strftime('%Y-%m-%d %H:%M')}"
+            f"时间窗口  {summary.start_at.astimezone(_local_tz()).strftime('%Y-%m-%d %H:%M')}"
             f" → {summary.end_at.astimezone(_local_tz()).strftime('%Y-%m-%d %H:%M')}"
         ),
-        (
-            f"总览：↓ {format_bytes(summary.total_rx_bytes)}"
-            f" | ↑ {format_bytes(summary.total_tx_bytes)}"
-            f" | 合计 {format_bytes(summary.total_bytes)}"
-        ),
+        f"下行总量  {format_bytes(summary.total_rx_bytes)}",
+        f"上行总量  {format_bytes(summary.total_tx_bytes)}",
+        f"合计流量  {format_bytes(summary.total_bytes)}",
     ]
     if not summary.node_summaries:
         lines.append("")
         lines.append("该时间段内暂无可用流量样本。")
         return "\n".join(lines)
 
-    lines.append("")
-    lines.append("🧾 节点明细")
+    lines.extend(["", "── 节点明细"])
     for item in summary.node_summaries:
         lines.append(
             f"━━━━━━━━━━\n"
             f"🖥️ {item.node_name}\n"
-            f"↓ {format_bytes(item.rx_bytes)} | ↑ {format_bytes(item.tx_bytes)} | 合计 {format_bytes(item.total_bytes)}"
+            f"下行  {format_bytes(item.rx_bytes)}\n"
+            f"上行  {format_bytes(item.tx_bytes)}\n"
+            f"合计  {format_bytes(item.total_bytes)}"
         )
     return "\n".join(lines)
 
