@@ -125,7 +125,9 @@ async def post_metrics(client: httpx.AsyncClient, token: str) -> None:
 async def run_agent() -> None:
     state = load_state(settings.agent_state_path)
     timeout = httpx.Timeout(settings.request_timeout_seconds)
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    # Follow HTTP->HTTPS redirects during server migrations so agents do not
+    # drop offline just because the public endpoint was upgraded behind a proxy.
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
         state = await ensure_registration(client, state)
         token = state["agent_token"]
 

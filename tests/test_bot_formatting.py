@@ -4,11 +4,17 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest import TestCase
 
-from proxypulse.bot.main import is_supported_webapp_url, render_node_card
+from proxypulse.bot.main import build_dashboard_menu_text, is_supported_webapp_url, render_node_card
 from proxypulse.services.dashboard import NodeCardSummary, NodeRateSummary, NodeTrafficWindowSummary
 
 
 class BotFormattingTests(TestCase):
+    def test_dashboard_menu_text_is_compact(self) -> None:
+        rendered = build_dashboard_menu_text()
+
+        self.assertIn("ProxyPulse 控制台", rendered)
+        self.assertNotIn("快捷入口", rendered)
+
     def test_webapp_button_requires_https(self) -> None:
         self.assertTrue(is_supported_webapp_url("https://example.com/app"))
         self.assertFalse(is_supported_webapp_url("http://example.com/app"))

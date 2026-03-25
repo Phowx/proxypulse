@@ -124,6 +124,10 @@ def is_supported_webapp_url(url: str) -> bool:
     return url.lower().startswith("https://")
 
 
+def build_dashboard_menu_text() -> str:
+    return "ProxyPulse 控制台\n\n选择下方入口继续。"
+
+
 def build_node_list_keyboard(node_names: list[str]) -> InlineKeyboardMarkup | None:
     if not node_names:
         return None
@@ -391,15 +395,7 @@ def _parse_local_datetime(value: str) -> datetime:
 
 async def send_dashboard(message: Message) -> None:
     await message.answer(
-        render_panel(
-            "ProxyPulse 控制台\n\n"
-            "可直接使用下方菜单，\n"
-            "也可以点击本消息里的快捷入口。"
-        ),
-        parse_mode="HTML",
-    )
-    await message.answer(
-        render_panel("快捷入口"),
+        render_panel(build_dashboard_menu_text()),
         parse_mode="HTML",
         reply_markup=build_dashboard_keyboard(),
     )
@@ -814,7 +810,7 @@ async def menu_callback_handler(callback: CallbackQuery) -> None:
         return
     if callback.message is not None:
         await callback.message.answer(
-            render_panel("快捷入口"),
+            render_panel(build_dashboard_menu_text()),
             parse_mode="HTML",
             reply_markup=build_dashboard_keyboard(),
         )
