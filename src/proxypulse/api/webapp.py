@@ -167,6 +167,11 @@ WEBAPP_HTML = """<!doctype html>
       gap: 12px;
       justify-content: space-between;
       align-items: start;
+      flex-wrap: wrap;
+    }
+    .section-copy {
+      flex: 1 1 220px;
+      min-width: 0;
     }
     .section-title {
       margin: 0;
@@ -189,6 +194,17 @@ WEBAPP_HTML = """<!doctype html>
       font-weight: 700;
       cursor: pointer;
       flex-shrink: 0;
+    }
+    .ghost-button.compact {
+      min-width: 40px;
+      width: 40px;
+      height: 40px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      line-height: 1;
     }
     .list {
       padding: 12px;
@@ -381,6 +397,14 @@ WEBAPP_HTML = """<!doctype html>
         width: 100%;
         justify-content: flex-end;
       }
+      .section-head {
+        display: grid;
+        gap: 10px;
+      }
+      .section-head .actions {
+        width: auto;
+        justify-content: flex-start;
+      }
     }
   </style>
 </head>
@@ -394,7 +418,7 @@ WEBAPP_HTML = """<!doctype html>
             <h1 class="title">节点总览</h1>
           </div>
           <div class="actions">
-            <button class="ghost-button" id="overview-refresh">刷新</button>
+            <button class="ghost-button compact" id="overview-refresh" aria-label="刷新">↻</button>
           </div>
         </div>
       </div>
@@ -403,12 +427,12 @@ WEBAPP_HTML = """<!doctype html>
 
     <section class="panel screen" id="screen-list">
       <div class="section-head">
-        <div>
+        <div class="section-copy">
           <h2 class="section-title" id="list-title">下一层</h2>
           <div class="section-subtitle" id="list-subtitle">从上面的卡片进入节点列表。</div>
         </div>
         <div class="actions">
-          <button class="ghost-button" id="list-refresh">刷新</button>
+          <button class="ghost-button compact" id="list-refresh" aria-label="刷新">↻</button>
           <button class="ghost-button" id="list-back">返回总览</button>
         </div>
       </div>
@@ -483,7 +507,7 @@ WEBAPP_HTML = """<!doctype html>
     }
 
     function getListMeta(id) {
-      if (id === 'all') return ['全部节点', '查看所有节点，按名称排序。'];
+      if (id === 'all') return ['全部节点', ''];
       if (id === 'online') return ['在线节点', '只显示当前在线的节点。'];
       if (id === 'offline') return ['离线节点', '优先处理最近掉线的节点。'];
       if (id === 'pending') return ['待接入节点', '这些节点还没有完成注册或上报。'];
@@ -576,6 +600,7 @@ WEBAPP_HTML = """<!doctype html>
       const nodes = getNodesForOverview(overviewId);
       listTitleEl.textContent = title;
       listSubtitleEl.textContent = subtitle;
+      listSubtitleEl.style.display = subtitle ? 'block' : 'none';
 
       if (!nodes.length) {
         listEl.innerHTML = '<div class="empty">这个分组下当前没有节点。</div>';
@@ -613,12 +638,12 @@ WEBAPP_HTML = """<!doctype html>
     function renderDetail(detail, overviewId) {
       detailEl.innerHTML = `
         <div class="section-head">
-          <div>
+          <div class="section-copy">
             <h2 class="section-title">${escapeHtml(detail.name)}</h2>
             <div class="section-subtitle">${escapeHtml(detail.hostname)} · ${escapeHtml(detail.platform)}</div>
           </div>
           <div class="actions">
-            <button class="ghost-button" id="detail-refresh">刷新</button>
+            <button class="ghost-button compact" id="detail-refresh" aria-label="刷新">↻</button>
             <button class="ghost-button" id="detail-back">返回列表</button>
           </div>
         </div>
