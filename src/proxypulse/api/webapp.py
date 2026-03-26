@@ -62,6 +62,23 @@ WEBAPP_HTML = """<!doctype html>
       box-shadow: var(--shadow);
       overflow: hidden;
     }
+    .screen {
+      display: none;
+    }
+    .screen.active {
+      display: block;
+      animation: screen-in 0.18s ease;
+    }
+    @keyframes screen-in {
+      from {
+        opacity: 0;
+        transform: translateY(8px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
     .hero {
       padding: 18px;
       position: relative;
@@ -283,12 +300,6 @@ WEBAPP_HTML = """<!doctype html>
       font-weight: 700;
       word-break: break-word;
     }
-    .detail {
-      display: none;
-    }
-    .detail.active {
-      display: block;
-    }
     .detail-body {
       padding: 16px 18px 18px;
       display: grid;
@@ -384,7 +395,7 @@ WEBAPP_HTML = """<!doctype html>
 </head>
 <body>
   <div class="shell">
-    <section class="panel">
+    <section class="panel screen" id="screen-overview">
       <div class="hero">
         <div class="eyebrow">ProxyPulse Web App</div>
         <div class="title-row">
@@ -398,18 +409,18 @@ WEBAPP_HTML = """<!doctype html>
       <div class="overview-grid" id="overview"></div>
     </section>
 
-    <section class="panel" id="list-panel">
+    <section class="panel screen" id="screen-list">
       <div class="section-head">
         <div>
           <h2 class="section-title" id="list-title">下一层</h2>
           <div class="section-subtitle" id="list-subtitle">从上面的卡片进入节点列表。</div>
         </div>
-        <button class="ghost-button" id="back" hidden>返回总览</button>
+        <button class="ghost-button" id="list-back">返回总览</button>
       </div>
       <div class="list" id="list"></div>
     </section>
 
-    <section class="panel detail" id="detail"></section>
+    <section class="panel detail screen" id="screen-detail"></section>
   </div>
 
   <script>
@@ -421,15 +432,19 @@ WEBAPP_HTML = """<!doctype html>
       tg.setBackgroundColor('#0c1119');
     }
 
+    const overviewScreenEl = document.getElementById('screen-overview');
+    const listScreenEl = document.getElementById('screen-list');
+    const detailScreenEl = document.getElementById('screen-detail');
     const overviewEl = document.getElementById('overview');
     const listEl = document.getElementById('list');
     const listTitleEl = document.getElementById('list-title');
     const listSubtitleEl = document.getElementById('list-subtitle');
-    const detailEl = document.getElementById('detail');
+    const detailEl = document.getElementById('screen-detail');
     const refreshBtn = document.getElementById('refresh');
-    const backBtn = document.getElementById('back');
+    const listBackBtn = document.getElementById('list-back');
     const statusClass = { '在线': 'online', '待接入': 'pending', '离线': 'offline' };
     const searchParams = new URLSearchParams(window.location.search);
+    const tgBackButton = tg?.BackButton;
 
     const overviewConfig = [
       { id: 'all', label: '节点总数', valueKey: 'node_count', meta: '全部节点' },
@@ -442,8 +457,7 @@ WEBAPP_HTML = """<!doctype html>
 
     let latestOverview = null;
     let latestNodes = [];
-    let selectedOverview = null;
-    let selectedNode = null;
+    let currentRoute = { screen: 'overview', overviewId: null, nodeName: null };
 
     function escapeHtml(value) {
       return String(value ?? '')
@@ -503,13 +517,57 @@ WEBAPP_HTML = """<!doctype html>
         .sort((left, right) => right.active_alert_count - left.active_alert_count);
     }
 
-    function renderOverview() {
+    function setActiveScreen(screen) {
+      overviewScreenEl.classList.toggle('active', screen === 'overview');
+      listScreenEl.classList.toggle('active', screen === 'list');
+      detailScreenEl.classList.toggle('active', screen === 'detail');
+    }
+
+    function syncTelegramBackButton() {
+      if (!tgBackButton) {
+        return;
+      }
+      if (currentRoute.screen === 'overview') {
+        tgBackButton.hide();
+      } else {
+        tgBackButton.show();
+      }
+    }
+
+    function parseRoute() {
+      const raw = window.location.hash.replace(/^#/, '').replace(/^\//, '');
+      if (!raw) {
+        return { screen: 'overview', overviewId: null, nodeName: null };
+      }
+      const segments = raw.split('/').filter(Boolean).map((segment) => decodeURIComponent(segment));
+      if (segments[0] === 'group' && segments[1]) {
+        return { screen: 'list', overviewId: segments[1], nodeName: null };
+      }
+      if (segments[0] === 'node' && segments[1] && segments[2]) {
+        return { screen: 'detail', overviewId: segments[1], nodeName: segments[2] };
+      }
+      return { screen: 'overview', overviewId: null, nodeName: null };
+    }
+
+    function goToOverview() {
+      window.location.hash = '/overview';
+    }
+
+    function goToGroup(overviewId) {
+      window.location.hash = `/group/${encodeURIComponent(overviewId)}`;
+    }
+
+    function goToNode(overviewId, nodeName) {
+      window.location.hash = `/node/${encodeURIComponent(overviewId)}/${encodeURIComponent(nodeName)}`;
+    }
+
+    function renderOverview(activeOverviewId = null) {
       if (!latestOverview) {
         overviewEl.innerHTML = '<div class="error">总览加载失败。</div>';
         return;
       }
       overviewEl.innerHTML = overviewConfig.map((card) => `
-        <button class="overview-card ${selectedOverview === card.id ? 'active' : ''}" data-overview="${card.id}">
+        <button class="overview-card ${activeOverviewId === card.id ? 'active' : ''}" data-overview="${card.id}">
           <div class="overview-label">${escapeHtml(card.label)}</div>
           <div class="overview-value">${escapeHtml(latestOverview[card.valueKey])}</div>
           <div class="overview-meta">${escapeHtml(card.meta)}</div>
@@ -517,32 +575,19 @@ WEBAPP_HTML = """<!doctype html>
       `).join('');
     }
 
-    function renderList() {
-      if (!selectedOverview) {
-        listTitleEl.textContent = '下一层';
-        listSubtitleEl.textContent = '从上面的总览卡片进入节点列表。';
-        backBtn.hidden = true;
-        listEl.innerHTML = '<div class="empty">先点一张总览卡片，再进入下一层。</div>';
-        detailEl.classList.remove('active');
-        detailEl.innerHTML = '';
-        return;
-      }
-
-      const [title, subtitle] = getListMeta(selectedOverview);
-      const nodes = getNodesForOverview(selectedOverview);
+    function renderList(overviewId, activeNodeName = null) {
+      const [title, subtitle] = getListMeta(overviewId);
+      const nodes = getNodesForOverview(overviewId);
       listTitleEl.textContent = title;
       listSubtitleEl.textContent = subtitle;
-      backBtn.hidden = false;
 
       if (!nodes.length) {
         listEl.innerHTML = '<div class="empty">这个分组下当前没有节点。</div>';
-        detailEl.classList.remove('active');
-        detailEl.innerHTML = '';
         return;
       }
 
       listEl.innerHTML = nodes.map((node) => `
-        <article class="node-card ${selectedNode === node.name ? 'active' : ''}" data-node="${escapeHtml(node.name)}">
+        <article class="node-card ${activeNodeName === node.name ? 'active' : ''}" data-node="${escapeHtml(node.name)}">
           <div class="row">
             <div>
               <h3 class="name">${escapeHtml(node.name)}</h3>
@@ -569,13 +614,20 @@ WEBAPP_HTML = """<!doctype html>
       `).join('');
     }
 
-    function renderDetail(detail) {
-      detailEl.classList.add('active');
+    function renderDetail(detail, overviewId) {
       detailEl.innerHTML = `
         <div class="section-head">
           <div>
             <h2 class="section-title">${escapeHtml(detail.name)}</h2>
             <div class="section-subtitle">${escapeHtml(detail.hostname)} · ${escapeHtml(detail.platform)}</div>
+          </div>
+          <button class="ghost-button" id="detail-back">返回列表</button>
+        </div>
+        <div class="section-head" style="padding-top:0;border-bottom:0;">
+          <div class="tags" style="margin-top:0;">
+            <span class="tag">${escapeHtml(detail.last_seen)}</span>
+            <span class="tag">${escapeHtml(detail.network_interface)}</span>
+            <span class="tag">${escapeHtml(detail.alert_badge)}</span>
           </div>
           ${statusBadge(detail.status_label)}
         </div>
@@ -618,6 +670,7 @@ WEBAPP_HTML = """<!doctype html>
           </div>
         </div>
       `;
+      document.getElementById('detail-back')?.addEventListener('click', () => goToGroup(overviewId));
     }
 
     async function api(path) {
@@ -637,34 +690,61 @@ WEBAPP_HTML = """<!doctype html>
       return response.json();
     }
 
-    async function loadOverview() {
+    async function refreshData() {
       try {
         const data = await api('/app/data/overview');
         latestOverview = data.overview;
         latestNodes = data.nodes;
-        if (selectedNode && !latestNodes.some((node) => node.name === selectedNode)) {
-          selectedNode = null;
-        }
-        renderOverview();
-        renderList();
+        await applyRoute();
       } catch (error) {
         overviewEl.innerHTML = `<div class="error">总览加载失败：${escapeHtml(error.message)}</div>`;
         listEl.innerHTML = '<div class="empty">暂时无法加载节点列表。</div>';
-        detailEl.classList.remove('active');
+        setActiveScreen('overview');
         detailEl.innerHTML = '';
       }
     }
 
-    async function loadDetail(name) {
-      selectedNode = name;
-      renderList();
+    async function loadDetail(overviewId, nodeName) {
       try {
-        const detail = await api(`/app/data/nodes/${encodeURIComponent(name)}`);
-        renderDetail(detail);
+        const detail = await api(`/app/data/nodes/${encodeURIComponent(nodeName)}`);
+        renderDetail(detail, overviewId);
+        setActiveScreen('detail');
       } catch (error) {
-        detailEl.classList.add('active');
+        setActiveScreen('detail');
         detailEl.innerHTML = `<div class="error">节点详情加载失败：${escapeHtml(error.message)}</div>`;
       }
+    }
+
+    async function applyRoute() {
+      currentRoute = parseRoute();
+      syncTelegramBackButton();
+
+      if (!latestOverview) {
+        return;
+      }
+
+      if (currentRoute.screen === 'overview') {
+        renderOverview(null);
+        setActiveScreen('overview');
+        return;
+      }
+
+      const overviewExists = overviewConfig.some((item) => item.id === currentRoute.overviewId);
+      if (!overviewExists) {
+        goToOverview();
+        return;
+      }
+
+      renderOverview(currentRoute.overviewId);
+
+      if (currentRoute.screen === 'list') {
+        renderList(currentRoute.overviewId, null);
+        setActiveScreen('list');
+        return;
+      }
+
+      renderList(currentRoute.overviewId, currentRoute.nodeName);
+      await loadDetail(currentRoute.overviewId, currentRoute.nodeName);
     }
 
     overviewEl.addEventListener('click', (event) => {
@@ -672,11 +752,7 @@ WEBAPP_HTML = """<!doctype html>
       if (!card) {
         return;
       }
-      selectedOverview = card.dataset.overview;
-      selectedNode = null;
-      renderOverview();
-      renderList();
-      window.scrollTo({ top: document.getElementById('list-panel').offsetTop - 8, behavior: 'smooth' });
+      goToGroup(card.dataset.overview);
     });
 
     listEl.addEventListener('click', async (event) => {
@@ -684,19 +760,24 @@ WEBAPP_HTML = """<!doctype html>
       if (!card) {
         return;
       }
-      await loadDetail(card.dataset.node);
+      goToNode(currentRoute.overviewId, card.dataset.node);
     });
 
-    backBtn.addEventListener('click', () => {
-      selectedOverview = null;
-      selectedNode = null;
-      renderOverview();
-      renderList();
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+    listBackBtn.addEventListener('click', goToOverview);
+    tgBackButton?.onClick(() => {
+      if (currentRoute.screen === 'detail') {
+        goToGroup(currentRoute.overviewId);
+        return;
+      }
+      goToOverview();
     });
 
-    refreshBtn.addEventListener('click', loadOverview);
-    loadOverview();
+    window.addEventListener('hashchange', applyRoute);
+    refreshBtn.addEventListener('click', refreshData);
+    if (!window.location.hash) {
+      goToOverview();
+    }
+    refreshData();
   </script>
 </body>
 </html>
