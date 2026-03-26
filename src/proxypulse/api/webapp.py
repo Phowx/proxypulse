@@ -114,23 +114,11 @@ WEBAPP_HTML = """<!doctype html>
       line-height: 1.08;
       font-weight: 800;
     }
-    .subtitle {
-      margin-top: 10px;
-      color: var(--muted);
-      font-size: 14px;
-      line-height: 1.55;
-      max-width: 540px;
-    }
-    .refresh {
-      border: 0;
-      border-radius: 999px;
-      padding: 11px 15px;
-      background: linear-gradient(135deg, var(--accent), var(--accent-strong));
-      color: #1a1208;
-      font-size: 13px;
-      font-weight: 800;
-      cursor: pointer;
-      box-shadow: 0 10px 24px rgba(255, 139, 57, 0.24);
+    .actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-shrink: 0;
     }
     .overview-grid {
       padding: 0 18px 18px;
@@ -196,7 +184,7 @@ WEBAPP_HTML = """<!doctype html>
       background: rgba(255, 255, 255, 0.04);
       color: var(--text);
       border-radius: 999px;
-      padding: 9px 13px;
+      padding: 8px 12px;
       font-size: 12px;
       font-weight: 700;
       cursor: pointer;
@@ -389,7 +377,10 @@ WEBAPP_HTML = """<!doctype html>
     }
     @media (max-width: 520px) {
       .title-row { align-items: stretch; }
-      .refresh { width: 100%; }
+      .actions {
+        width: 100%;
+        justify-content: flex-end;
+      }
     }
   </style>
 </head>
@@ -401,9 +392,10 @@ WEBAPP_HTML = """<!doctype html>
         <div class="title-row">
           <div>
             <h1 class="title">节点总览</h1>
-            <div class="subtitle">默认只看 6 张总览卡片。点哪一张，再往下一层看对应节点，再点节点才展开详细状态。</div>
           </div>
-          <button class="refresh" id="refresh">刷新数据</button>
+          <div class="actions">
+            <button class="ghost-button" id="overview-refresh">刷新</button>
+          </div>
         </div>
       </div>
       <div class="overview-grid" id="overview"></div>
@@ -415,7 +407,10 @@ WEBAPP_HTML = """<!doctype html>
           <h2 class="section-title" id="list-title">下一层</h2>
           <div class="section-subtitle" id="list-subtitle">从上面的卡片进入节点列表。</div>
         </div>
-        <button class="ghost-button" id="list-back">返回总览</button>
+        <div class="actions">
+          <button class="ghost-button" id="list-refresh">刷新</button>
+          <button class="ghost-button" id="list-back">返回总览</button>
+        </div>
       </div>
       <div class="list" id="list"></div>
     </section>
@@ -440,8 +435,9 @@ WEBAPP_HTML = """<!doctype html>
     const listTitleEl = document.getElementById('list-title');
     const listSubtitleEl = document.getElementById('list-subtitle');
     const detailEl = document.getElementById('screen-detail');
-    const refreshBtn = document.getElementById('refresh');
+    const overviewRefreshBtn = document.getElementById('overview-refresh');
     const listBackBtn = document.getElementById('list-back');
+    const listRefreshBtn = document.getElementById('list-refresh');
     const statusClass = { '在线': 'online', '待接入': 'pending', '离线': 'offline' };
     const searchParams = new URLSearchParams(window.location.search);
     const tgBackButton = tg?.BackButton;
@@ -621,7 +617,10 @@ WEBAPP_HTML = """<!doctype html>
             <h2 class="section-title">${escapeHtml(detail.name)}</h2>
             <div class="section-subtitle">${escapeHtml(detail.hostname)} · ${escapeHtml(detail.platform)}</div>
           </div>
-          <button class="ghost-button" id="detail-back">返回列表</button>
+          <div class="actions">
+            <button class="ghost-button" id="detail-refresh">刷新</button>
+            <button class="ghost-button" id="detail-back">返回列表</button>
+          </div>
         </div>
         <div class="section-head" style="padding-top:0;border-bottom:0;">
           <div class="tags" style="margin-top:0;">
@@ -671,6 +670,7 @@ WEBAPP_HTML = """<!doctype html>
         </div>
       `;
       document.getElementById('detail-back')?.addEventListener('click', () => goToGroup(overviewId));
+      document.getElementById('detail-refresh')?.addEventListener('click', refreshData);
     }
 
     async function api(path) {
@@ -773,7 +773,8 @@ WEBAPP_HTML = """<!doctype html>
     });
 
     window.addEventListener('hashchange', applyRoute);
-    refreshBtn.addEventListener('click', refreshData);
+    overviewRefreshBtn.addEventListener('click', refreshData);
+    listRefreshBtn.addEventListener('click', refreshData);
     if (!window.location.hash) {
       goToOverview();
     }
