@@ -663,10 +663,6 @@ WEBAPP_HTML = """<!doctype html>
                 <div class="summary-value">${escapeHtml(item.value)}</div>
               </div>
             `).join('')}
-            <div class="summary-item full">
-              <div class="summary-label">IP</div>
-              <div class="summary-value">${escapeHtml(detail.ips)}</div>
-            </div>
           </div>
 
           ${detail.sections.map((section) => `
