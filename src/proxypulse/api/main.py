@@ -183,11 +183,14 @@ async def webapp_overview(
         "nodes": [
             {
                 "name": card.node.name,
+                "status": card.node.status.value,
                 "status_label": webapp_status_label(card.node),
+                "is_online": card.node.is_online,
                 "last_seen": format_relative_time(card.node.last_seen_at),
                 "hostname": card.node.hostname or "未上报",
                 "platform": card.node.platform or "未上报",
                 "network_interface": webapp_network_interface(card.node.latest_network_interface),
+                "active_alert_count": card.active_alert_count,
                 "alert_badge": f"{card.active_alert_count} 条告警" if card.active_alert_count else "无告警",
                 "cpu": format_metric_value(card.node.latest_cpu_percent),
                 "memory": format_metric_value(card.node.latest_memory_percent),
@@ -197,6 +200,7 @@ async def webapp_overview(
                 "tx_rate": webapp_rate(card.current_rate.tx_bps),
                 "rx_24h": format_bytes(card.traffic_24h.rx_bytes),
                 "tx_24h": format_bytes(card.traffic_24h.tx_bytes),
+                "total_24h_bytes": card.traffic_24h.total_bytes,
                 "total_24h": format_bytes(card.traffic_24h.total_bytes),
                 "traffic_1h": format_bytes(
                     detail_summaries[card.node.name].trend_1h.rx_bytes + detail_summaries[card.node.name].trend_1h.tx_bytes

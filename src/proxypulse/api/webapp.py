@@ -19,21 +19,19 @@ WEBAPP_HTML = """<!doctype html>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
     :root {
-      --bg-top: #121826;
-      --bg-bottom: #0b1018;
-      --panel: rgba(16, 23, 36, 0.84);
-      --panel-strong: #161f2f;
+      --bg-top: #101826;
+      --bg-bottom: #090e16;
+      --panel: rgba(17, 24, 37, 0.88);
       --panel-soft: rgba(255, 255, 255, 0.04);
       --line: rgba(255, 255, 255, 0.08);
-      --line-strong: rgba(255, 255, 255, 0.14);
-      --text: #f4f7fb;
-      --muted: #99a7be;
-      --accent: #ffb14a;
-      --accent-strong: #ff8a33;
-      --good: #5fd17a;
-      --warn: #ffc45a;
-      --bad: #ff6f6f;
-      --shadow: 0 24px 60px rgba(0, 0, 0, 0.34);
+      --text: #f2f5fb;
+      --muted: #97a4bb;
+      --accent: #ffaf4a;
+      --accent-strong: #ff8b39;
+      --good: #55d17a;
+      --warn: #ffc65a;
+      --bad: #ff6e6e;
+      --shadow: 0 20px 50px rgba(0, 0, 0, 0.34);
       --radius: 24px;
       --radius-sm: 18px;
       --font-sans: "Avenir Next", "SF Pro Display", "Segoe UI", sans-serif;
@@ -46,105 +44,16 @@ WEBAPP_HTML = """<!doctype html>
       color: var(--text);
       font-family: var(--font-sans);
       background:
-        radial-gradient(circle at top left, rgba(255, 177, 74, 0.18), transparent 26%),
-        radial-gradient(circle at top right, rgba(85, 209, 122, 0.12), transparent 24%),
+        radial-gradient(circle at top left, rgba(255, 175, 74, 0.18), transparent 28%),
+        radial-gradient(circle at top right, rgba(85, 209, 122, 0.12), transparent 26%),
         linear-gradient(180deg, var(--bg-top) 0%, var(--bg-bottom) 100%);
     }
-    body { padding: 16px 14px 26px; }
+    body { padding: 12px 10px 22px; }
     .shell {
-      max-width: 1100px;
+      max-width: 760px;
       margin: 0 auto;
       display: grid;
-      gap: 16px;
-    }
-    .hero {
-      padding: 22px;
-      border-radius: 28px;
-      background: linear-gradient(160deg, rgba(25, 32, 48, 0.96), rgba(12, 17, 28, 0.96));
-      border: 1px solid var(--line);
-      box-shadow: var(--shadow);
-      overflow: hidden;
-      position: relative;
-    }
-    .hero::after {
-      content: "";
-      position: absolute;
-      inset: auto -40px -60px auto;
-      width: 180px;
-      height: 180px;
-      border-radius: 50%;
-      background: radial-gradient(circle, rgba(255, 177, 74, 0.18), transparent 68%);
-      pointer-events: none;
-    }
-    .eyebrow {
-      color: var(--accent);
-      font-size: 12px;
-      letter-spacing: 0.16em;
-      text-transform: uppercase;
-      margin-bottom: 12px;
-    }
-    .title-row {
-      display: flex;
-      justify-content: space-between;
-      gap: 16px;
-      align-items: start;
-      flex-wrap: wrap;
-    }
-    .title {
-      margin: 0;
-      font-size: 30px;
-      line-height: 1.05;
-      font-weight: 800;
-    }
-    .subtitle {
-      margin-top: 10px;
-      max-width: 640px;
-      color: var(--muted);
-      font-size: 14px;
-      line-height: 1.55;
-    }
-    .refresh {
-      border: 0;
-      border-radius: 999px;
-      padding: 11px 16px;
-      color: #1a1208;
-      background: linear-gradient(135deg, var(--accent), var(--accent-strong));
-      font-weight: 800;
-      font-size: 13px;
-      cursor: pointer;
-      box-shadow: 0 12px 28px rgba(255, 138, 51, 0.24);
-    }
-    .stats {
-      margin-top: 18px;
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 12px;
-    }
-    .stat {
-      padding: 14px 15px;
-      border-radius: var(--radius-sm);
-      background: rgba(255, 255, 255, 0.04);
-      border: 1px solid rgba(255, 255, 255, 0.06);
-      min-height: 88px;
-    }
-    .stat-label {
-      color: var(--muted);
-      font-size: 11px;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      margin-bottom: 10px;
-    }
-    .stat-value {
-      font-size: 24px;
-      line-height: 1.15;
-      font-weight: 800;
-      word-break: break-word;
-    }
-    .workspace {
-      display: grid;
-      grid-template-columns: minmax(0, 340px) minmax(0, 1fr);
-      gap: 16px;
-      align-items: start;
+      gap: 14px;
     }
     .panel {
       background: var(--panel);
@@ -153,45 +62,151 @@ WEBAPP_HTML = """<!doctype html>
       box-shadow: var(--shadow);
       overflow: hidden;
     }
-    .sidebar-head,
-    .detail-head {
-      padding: 18px 18px 16px;
-      border-bottom: 1px solid var(--line);
+    .hero {
+      padding: 18px;
+      position: relative;
     }
-    .panel-title {
+    .hero::after {
+      content: "";
+      position: absolute;
+      right: -30px;
+      bottom: -60px;
+      width: 160px;
+      height: 160px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(255, 175, 74, 0.18), transparent 68%);
+      pointer-events: none;
+    }
+    .eyebrow {
+      color: var(--accent);
+      font-size: 12px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      margin-bottom: 10px;
+    }
+    .title-row {
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+      justify-content: space-between;
+      flex-wrap: wrap;
+    }
+    .title {
+      margin: 0;
+      font-size: 28px;
+      line-height: 1.08;
+      font-weight: 800;
+    }
+    .subtitle {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.55;
+      max-width: 540px;
+    }
+    .refresh {
+      border: 0;
+      border-radius: 999px;
+      padding: 11px 15px;
+      background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+      color: #1a1208;
+      font-size: 13px;
+      font-weight: 800;
+      cursor: pointer;
+      box-shadow: 0 10px 24px rgba(255, 139, 57, 0.24);
+    }
+    .overview-grid {
+      padding: 0 18px 18px;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .overview-card {
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      background: rgba(255, 255, 255, 0.04);
+      border-radius: var(--radius-sm);
+      padding: 14px;
+      text-align: left;
+      color: var(--text);
+      cursor: pointer;
+      min-height: 108px;
+      transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+    }
+    .overview-card.active {
+      background: linear-gradient(180deg, rgba(255, 175, 74, 0.1), rgba(255, 255, 255, 0.04));
+      border-color: rgba(255, 175, 74, 0.34);
+      box-shadow: inset 0 0 0 1px rgba(255, 175, 74, 0.08);
+    }
+    .overview-label {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+      margin-bottom: 14px;
+    }
+    .overview-value {
+      font-size: 24px;
+      line-height: 1.12;
+      font-weight: 800;
+      margin-bottom: 10px;
+      word-break: break-word;
+    }
+    .overview-meta {
+      color: rgba(255, 255, 255, 0.64);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+    .section-head {
+      padding: 16px 18px 14px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      gap: 12px;
+      justify-content: space-between;
+      align-items: start;
+    }
+    .section-title {
       margin: 0;
       font-size: 18px;
       font-weight: 800;
     }
-    .panel-subtitle {
+    .section-subtitle {
       margin-top: 8px;
       color: var(--muted);
       font-size: 13px;
       line-height: 1.45;
     }
-    .cards {
+    .ghost-button {
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--text);
+      border-radius: 999px;
+      padding: 9px 13px;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .list {
+      padding: 12px;
       display: grid;
       gap: 10px;
-      padding: 12px;
     }
-    .card {
+    .node-card {
       padding: 14px;
       border-radius: 20px;
-      background: rgba(255, 255, 255, 0.03);
       border: 1px solid rgba(255, 255, 255, 0.05);
+      background: rgba(255, 255, 255, 0.03);
       cursor: pointer;
-      transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+      transition: transform 0.18s ease, border-color 0.18s ease;
     }
-    .card:hover {
+    .node-card.active {
+      border-color: rgba(255, 175, 74, 0.34);
+      background: linear-gradient(180deg, rgba(255, 175, 74, 0.08), rgba(255, 255, 255, 0.03));
+    }
+    .node-card:hover {
       transform: translateY(-1px);
-      border-color: rgba(255, 177, 74, 0.28);
+      border-color: rgba(255, 175, 74, 0.28);
     }
-    .card.active {
-      background: linear-gradient(180deg, rgba(255, 177, 74, 0.08), rgba(255, 255, 255, 0.04));
-      border-color: rgba(255, 177, 74, 0.32);
-      box-shadow: inset 0 0 0 1px rgba(255, 177, 74, 0.12);
-    }
-    .name-row {
+    .row {
       display: flex;
       justify-content: space-between;
       gap: 12px;
@@ -199,7 +214,7 @@ WEBAPP_HTML = """<!doctype html>
     }
     .name {
       margin: 0;
-      font-size: 19px;
+      font-size: 18px;
       font-weight: 800;
     }
     .identity {
@@ -230,45 +245,39 @@ WEBAPP_HTML = """<!doctype html>
     .status.online .status-dot { background: var(--good); }
     .status.pending .status-dot { background: var(--warn); }
     .status.offline .status-dot { background: var(--bad); }
-    .meta {
+    .tags {
       margin-top: 12px;
       display: flex;
       flex-wrap: wrap;
       gap: 8px;
     }
-    .meta span {
+    .tag {
       padding: 6px 10px;
       border-radius: 999px;
       background: rgba(255, 255, 255, 0.04);
       color: var(--muted);
       font-size: 12px;
     }
-    .mini-grid,
-    .pairs,
-    .highlights {
+    .metrics {
+      margin-top: 12px;
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-columns: 1fr 1fr;
       gap: 10px;
     }
-    .mini-grid { margin-top: 14px; }
-    .mini {
-      padding: 11px 12px;
+    .metric {
+      padding: 10px 11px;
       border-radius: 16px;
       background: rgba(255, 255, 255, 0.03);
       border: 1px solid rgba(255, 255, 255, 0.05);
     }
-    .mini-label,
-    .pair-label,
-    .highlight-label {
+    .metric-label {
       color: var(--muted);
       font-size: 11px;
       letter-spacing: 0.08em;
       text-transform: uppercase;
       margin-bottom: 6px;
     }
-    .mini-value,
-    .pair-value,
-    .highlight-value {
+    .metric-value {
       font-size: 15px;
       line-height: 1.4;
       font-weight: 700;
@@ -285,63 +294,66 @@ WEBAPP_HTML = """<!doctype html>
       display: grid;
       gap: 16px;
     }
-    .summary-strip {
+    .summary-grid,
+    .pairs {
       display: grid;
-      gap: 14px;
-      padding: 16px;
-      border-radius: 20px;
-      background: linear-gradient(160deg, rgba(255, 177, 74, 0.08), rgba(255, 255, 255, 0.03));
-      border: 1px solid rgba(255, 177, 74, 0.16);
-    }
-    .summary-grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-columns: 1fr 1fr;
       gap: 10px;
     }
-    .summary-item {
-      padding: 12px 13px;
-      border-radius: 16px;
-      background: rgba(255, 255, 255, 0.04);
-      border: 1px solid rgba(255, 255, 255, 0.05);
-    }
-    .summary-item.full,
-    .pair.full {
-      grid-column: 1 / -1;
-    }
-    .section {
-      display: grid;
-      gap: 10px;
-    }
-    .section-title {
-      color: var(--muted);
-      font-size: 12px;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-    }
+    .summary-item,
     .pair {
       padding: 12px 13px;
       border-radius: 18px;
       background: rgba(255, 255, 255, 0.03);
       border: 1px solid rgba(255, 255, 255, 0.05);
     }
+    .summary-item.full,
+    .pair.full {
+      grid-column: 1 / -1;
+    }
+    .summary-label,
+    .pair-label {
+      color: var(--muted);
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-bottom: 6px;
+    }
+    .summary-value,
+    .pair-value {
+      font-size: 15px;
+      line-height: 1.45;
+      font-weight: 700;
+      word-break: break-word;
+    }
+    .group {
+      display: grid;
+      gap: 10px;
+    }
+    .group-title {
+      color: var(--muted);
+      font-size: 12px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
     .alerts {
       display: grid;
       gap: 10px;
     }
     .alert {
-      padding: 13px 14px;
+      padding: 12px 13px;
       border-radius: 18px;
       border: 1px solid rgba(255, 255, 255, 0.06);
       background: rgba(255, 255, 255, 0.03);
       line-height: 1.5;
     }
     .alert.critical {
-      border-color: rgba(255, 111, 111, 0.38);
-      background: rgba(255, 111, 111, 0.08);
+      border-color: rgba(255, 110, 110, 0.34);
+      background: rgba(255, 110, 110, 0.08);
     }
     .alert.warning {
-      border-color: rgba(255, 196, 90, 0.34);
-      background: rgba(255, 196, 90, 0.08);
+      border-color: rgba(255, 198, 90, 0.34);
+      background: rgba(255, 198, 90, 0.08);
     }
     .alert strong {
       display: inline-block;
@@ -352,6 +364,7 @@ WEBAPP_HTML = """<!doctype html>
     }
     .empty,
     .error {
+      margin: 12px;
       padding: 18px;
       border-radius: 18px;
       text-align: center;
@@ -359,61 +372,44 @@ WEBAPP_HTML = """<!doctype html>
       background: rgba(255, 255, 255, 0.04);
       border: 1px solid rgba(255, 255, 255, 0.05);
     }
-    @media (max-width: 920px) {
-      .workspace {
-        grid-template-columns: 1fr;
-      }
-    }
-    @media (max-width: 720px) {
-      body { padding: 12px 10px 22px; }
-      .hero { padding: 18px; }
-      .title { font-size: 26px; }
-      .stats,
-      .summary-grid,
-      .pairs,
-      .highlights,
-      .mini-grid {
-        grid-template-columns: 1fr 1fr;
-      }
+    @media (min-width: 720px) {
+      body { padding: 16px 14px 26px; }
+      .overview-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
     }
     @media (max-width: 520px) {
-      .stats {
-        grid-template-columns: 1fr 1fr;
-      }
-      .title-row {
-        align-items: stretch;
-      }
-      .refresh {
-        width: 100%;
-      }
+      .title-row { align-items: stretch; }
+      .refresh { width: 100%; }
     }
   </style>
 </head>
 <body>
   <div class="shell">
-    <section class="hero">
-      <div class="eyebrow">ProxyPulse Web App</div>
-      <div class="title-row">
-        <div>
-          <h1 class="title">节点总览</h1>
-          <div class="subtitle">把 Telegram 文本入口留给通知，把更完整的状态、趋势和套餐视图放进一个真正可读的面板里。</div>
+    <section class="panel">
+      <div class="hero">
+        <div class="eyebrow">ProxyPulse Web App</div>
+        <div class="title-row">
+          <div>
+            <h1 class="title">节点总览</h1>
+            <div class="subtitle">默认只看 6 张总览卡片。点哪一张，再往下一层看对应节点，再点节点才展开详细状态。</div>
+          </div>
+          <button class="refresh" id="refresh">刷新数据</button>
         </div>
-        <button class="refresh" id="refresh">刷新数据</button>
       </div>
-      <div class="stats" id="stats"></div>
+      <div class="overview-grid" id="overview"></div>
     </section>
 
-    <section class="workspace">
-      <aside class="panel">
-        <div class="sidebar-head">
-          <h2 class="panel-title">节点轨道</h2>
-          <div class="panel-subtitle">先看异常，再点进单节点详情。当前速率、24h 总量和在线时长都直接展示在卡片里。</div>
+    <section class="panel" id="list-panel">
+      <div class="section-head">
+        <div>
+          <h2 class="section-title" id="list-title">下一层</h2>
+          <div class="section-subtitle" id="list-subtitle">从上面的卡片进入节点列表。</div>
         </div>
-        <div class="cards" id="cards"></div>
-      </aside>
-
-      <section class="panel detail" id="detail"></section>
+        <button class="ghost-button" id="back" hidden>返回总览</button>
+      </div>
+      <div class="list" id="list"></div>
     </section>
+
+    <section class="panel detail" id="detail"></section>
   </div>
 
   <script>
@@ -421,19 +417,33 @@ WEBAPP_HTML = """<!doctype html>
     if (tg) {
       tg.ready();
       tg.expand();
-      tg.setHeaderColor('#151c2c');
-      tg.setBackgroundColor('#0d131d');
+      tg.setHeaderColor('#141b2a');
+      tg.setBackgroundColor('#0c1119');
     }
 
-    const statsEl = document.getElementById('stats');
-    const cardsEl = document.getElementById('cards');
+    const overviewEl = document.getElementById('overview');
+    const listEl = document.getElementById('list');
+    const listTitleEl = document.getElementById('list-title');
+    const listSubtitleEl = document.getElementById('list-subtitle');
     const detailEl = document.getElementById('detail');
     const refreshBtn = document.getElementById('refresh');
+    const backBtn = document.getElementById('back');
     const statusClass = { '在线': 'online', '待接入': 'pending', '离线': 'offline' };
     const searchParams = new URLSearchParams(window.location.search);
 
-    let selectedNode = null;
+    const overviewConfig = [
+      { id: 'all', label: '节点总数', valueKey: 'node_count', meta: '全部节点' },
+      { id: 'online', label: '在线', valueKey: 'online_count', meta: '当前在线节点' },
+      { id: 'offline', label: '离线', valueKey: 'offline_count', meta: '当前离线节点' },
+      { id: 'pending', label: '待接入', valueKey: 'pending_count', meta: '尚未完成接入' },
+      { id: 'traffic', label: '24h 合计', valueKey: 'total_traffic_24h', meta: '按 24h 总量排序' },
+      { id: 'alerts', label: '活动告警', valueKey: 'active_alert_count', meta: '仅显示有告警节点' },
+    ];
+
+    let latestOverview = null;
     let latestNodes = [];
+    let selectedOverview = null;
+    let selectedNode = null;
 
     function escapeHtml(value) {
       return String(value ?? '')
@@ -462,61 +472,97 @@ WEBAPP_HTML = """<!doctype html>
       `;
     }
 
-    function stat(label, value) {
-      return `
-        <div class="stat">
-          <div class="stat-label">${escapeHtml(label)}</div>
-          <div class="stat-value">${escapeHtml(value)}</div>
-        </div>
-      `;
+    function getListMeta(id) {
+      if (id === 'all') return ['全部节点', '查看所有节点，按名称排序。'];
+      if (id === 'online') return ['在线节点', '只显示当前在线的节点。'];
+      if (id === 'offline') return ['离线节点', '优先处理最近掉线的节点。'];
+      if (id === 'pending') return ['待接入节点', '这些节点还没有完成注册或上报。'];
+      if (id === 'traffic') return ['24h 流量排行', '按近 24 小时总流量从高到低排序。'];
+      return ['活动告警', '只显示当前存在活动告警的节点。'];
     }
 
-    function renderStats(data) {
-      statsEl.innerHTML = [
-        ['节点总数', data.node_count],
-        ['在线', data.online_count],
-        ['离线', data.offline_count],
-        ['待接入', data.pending_count],
-        ['24h 合计', data.total_traffic_24h],
-        ['活动告警', data.active_alert_count],
-      ].map(([label, value]) => stat(label, value)).join('');
+    function getNodesForOverview(id) {
+      const nodes = [...latestNodes];
+      if (id === 'all') {
+        return nodes.sort((left, right) => left.name.localeCompare(right.name));
+      }
+      if (id === 'online') {
+        return nodes.filter((node) => node.is_online).sort((left, right) => left.name.localeCompare(right.name));
+      }
+      if (id === 'offline') {
+        return nodes.filter((node) => node.status === 'offline').sort((left, right) => left.name.localeCompare(right.name));
+      }
+      if (id === 'pending') {
+        return nodes.filter((node) => node.status === 'pending').sort((left, right) => left.name.localeCompare(right.name));
+      }
+      if (id === 'traffic') {
+        return nodes.sort((left, right) => (right.total_24h_bytes || 0) - (left.total_24h_bytes || 0));
+      }
+      return nodes
+        .filter((node) => node.active_alert_count > 0)
+        .sort((left, right) => right.active_alert_count - left.active_alert_count);
     }
 
-    function renderCards(nodes) {
-      if (!nodes.length) {
-        cardsEl.innerHTML = '<div class="empty">还没有接入任何节点。</div>';
+    function renderOverview() {
+      if (!latestOverview) {
+        overviewEl.innerHTML = '<div class="error">总览加载失败。</div>';
         return;
       }
-      cardsEl.innerHTML = nodes.map((node) => `
-        <article class="card ${selectedNode === node.name ? 'active' : ''}" data-node="${escapeHtml(node.name)}">
-          <div class="name-row">
+      overviewEl.innerHTML = overviewConfig.map((card) => `
+        <button class="overview-card ${selectedOverview === card.id ? 'active' : ''}" data-overview="${card.id}">
+          <div class="overview-label">${escapeHtml(card.label)}</div>
+          <div class="overview-value">${escapeHtml(latestOverview[card.valueKey])}</div>
+          <div class="overview-meta">${escapeHtml(card.meta)}</div>
+        </button>
+      `).join('');
+    }
+
+    function renderList() {
+      if (!selectedOverview) {
+        listTitleEl.textContent = '下一层';
+        listSubtitleEl.textContent = '从上面的总览卡片进入节点列表。';
+        backBtn.hidden = true;
+        listEl.innerHTML = '<div class="empty">先点一张总览卡片，再进入下一层。</div>';
+        detailEl.classList.remove('active');
+        detailEl.innerHTML = '';
+        return;
+      }
+
+      const [title, subtitle] = getListMeta(selectedOverview);
+      const nodes = getNodesForOverview(selectedOverview);
+      listTitleEl.textContent = title;
+      listSubtitleEl.textContent = subtitle;
+      backBtn.hidden = false;
+
+      if (!nodes.length) {
+        listEl.innerHTML = '<div class="empty">这个分组下当前没有节点。</div>';
+        detailEl.classList.remove('active');
+        detailEl.innerHTML = '';
+        return;
+      }
+
+      listEl.innerHTML = nodes.map((node) => `
+        <article class="node-card ${selectedNode === node.name ? 'active' : ''}" data-node="${escapeHtml(node.name)}">
+          <div class="row">
             <div>
               <h3 class="name">${escapeHtml(node.name)}</h3>
               <div class="identity">${escapeHtml(node.hostname)}<br>${escapeHtml(node.platform)}</div>
             </div>
             ${statusBadge(node.status_label)}
           </div>
-          <div class="meta">
-            <span>${escapeHtml(node.last_seen)}</span>
-            <span>${escapeHtml(node.network_interface)}</span>
-            <span>${escapeHtml(node.alert_badge)}</span>
+          <div class="tags">
+            <span class="tag">${escapeHtml(node.last_seen)}</span>
+            <span class="tag">${escapeHtml(node.network_interface)}</span>
+            <span class="tag">${escapeHtml(node.alert_badge)}</span>
           </div>
-          <div class="mini-grid">
-            <div class="mini">
-              <div class="mini-label">CPU / 内存</div>
-              <div class="mini-value">${escapeHtml(node.cpu)} / ${escapeHtml(node.memory)}</div>
+          <div class="metrics">
+            <div class="metric">
+              <div class="metric-label">资源</div>
+              <div class="metric-value">CPU ${escapeHtml(node.cpu)}<br>内存 ${escapeHtml(node.memory)}</div>
             </div>
-            <div class="mini">
-              <div class="mini-label">磁盘 / 运行</div>
-              <div class="mini-value">${escapeHtml(node.disk)} / ${escapeHtml(node.uptime)}</div>
-            </div>
-            <div class="mini">
-              <div class="mini-label">当前速率</div>
-              <div class="mini-value">↓ ${escapeHtml(node.rx_rate)}<br>↑ ${escapeHtml(node.tx_rate)}</div>
-            </div>
-            <div class="mini">
-              <div class="mini-label">24h 总量</div>
-              <div class="mini-value">${escapeHtml(node.total_24h)}<br><span style="color:var(--muted);font-size:12px;">1h ${escapeHtml(node.traffic_1h)}</span></div>
+            <div class="metric">
+              <div class="metric-label">流量</div>
+              <div class="metric-value">24h ${escapeHtml(node.total_24h)}<br>↓ ${escapeHtml(node.rx_rate)} / ↑ ${escapeHtml(node.tx_rate)}</div>
             </div>
           </div>
         </article>
@@ -526,48 +572,38 @@ WEBAPP_HTML = """<!doctype html>
     function renderDetail(detail) {
       detailEl.classList.add('active');
       detailEl.innerHTML = `
-        <div class="detail-head">
-          <div class="name-row">
-            <div>
-              <h3 class="name">${escapeHtml(detail.name)}</h3>
-              <div class="identity">${escapeHtml(detail.hostname)}<br>${escapeHtml(detail.platform)}</div>
-            </div>
-            ${statusBadge(detail.status_label)}
+        <div class="section-head">
+          <div>
+            <h2 class="section-title">${escapeHtml(detail.name)}</h2>
+            <div class="section-subtitle">${escapeHtml(detail.hostname)} · ${escapeHtml(detail.platform)}</div>
           </div>
-          <div class="meta">
-            <span>${escapeHtml(detail.last_seen)}</span>
-            <span>${escapeHtml(detail.network_interface)}</span>
-            <span>${escapeHtml(detail.alert_badge)}</span>
-          </div>
+          ${statusBadge(detail.status_label)}
         </div>
         <div class="detail-body">
-          <div class="summary-strip">
-            <div class="section-title">当前摘要</div>
-            <div class="summary-grid">
-              ${detail.highlights.map((item) => `
-                <div class="summary-item">
-                  <div class="highlight-label">${escapeHtml(item.label)}</div>
-                  <div class="highlight-value">${escapeHtml(item.value)}</div>
-                </div>
-              `).join('')}
-              <div class="summary-item full">
-                <div class="highlight-label">IP</div>
-                <div class="highlight-value">${escapeHtml(detail.ips)}</div>
+          <div class="summary-grid">
+            ${detail.highlights.map((item) => `
+              <div class="summary-item">
+                <div class="summary-label">${escapeHtml(item.label)}</div>
+                <div class="summary-value">${escapeHtml(item.value)}</div>
               </div>
+            `).join('')}
+            <div class="summary-item full">
+              <div class="summary-label">IP</div>
+              <div class="summary-value">${escapeHtml(detail.ips)}</div>
             </div>
           </div>
 
           ${detail.sections.map((section) => `
-            <div class="section">
-              <div class="section-title">${escapeHtml(section.title)}</div>
+            <div class="group">
+              <div class="group-title">${escapeHtml(section.title)}</div>
               <div class="pairs">
                 ${section.items.map((item) => pair(item.label, item.value, item.full)).join('')}
               </div>
             </div>
           `).join('')}
 
-          <div class="section">
-            <div class="section-title">当前告警</div>
+          <div class="group">
+            <div class="group-title">当前告警</div>
             <div class="alerts">
               ${detail.alerts.length
                 ? detail.alerts.map((alert) => `
@@ -576,7 +612,7 @@ WEBAPP_HTML = """<!doctype html>
                       <div>${escapeHtml(alert.text)}</div>
                     </div>
                   `).join('')
-                : '<div class="empty">当前没有活动告警。</div>'
+                : '<div class="empty" style="margin:0;">当前没有活动告警。</div>'
               }
             </div>
           </div>
@@ -586,18 +622,14 @@ WEBAPP_HTML = """<!doctype html>
 
     async function api(path) {
       const initData = tg?.initData || '';
-      const headers = {
-        'X-Telegram-Init-Data': initData,
-      };
+      const headers = { 'X-Telegram-Init-Data': initData };
       const fallbackUser = searchParams.get('uid');
       const fallbackToken = searchParams.get('sig');
       if (!initData && fallbackUser && fallbackToken) {
         headers['X-ProxyPulse-Web-User'] = fallbackUser;
         headers['X-ProxyPulse-Web-Token'] = fallbackToken;
       }
-      const response = await fetch(path, {
-        headers,
-      });
+      const response = await fetch(path, { headers });
       if (!response.ok) {
         const text = await response.text();
         throw new Error(text || `HTTP ${response.status}`);
@@ -608,31 +640,26 @@ WEBAPP_HTML = """<!doctype html>
     async function loadOverview() {
       try {
         const data = await api('/app/data/overview');
-        renderStats(data.overview);
+        latestOverview = data.overview;
         latestNodes = data.nodes;
-        if (!selectedNode || !data.nodes.some((node) => node.name === selectedNode)) {
-          selectedNode = data.nodes[0]?.name || null;
+        if (selectedNode && !latestNodes.some((node) => node.name === selectedNode)) {
+          selectedNode = null;
         }
-        renderCards(latestNodes);
-        if (selectedNode) {
-          await loadDetail(selectedNode);
-        } else {
-          detailEl.classList.remove('active');
-          detailEl.innerHTML = '<div class="empty">选择左侧节点查看详情。</div>';
-        }
+        renderOverview();
+        renderList();
       } catch (error) {
-        statsEl.innerHTML = `<div class="error">加载失败：${escapeHtml(error.message)}</div>`;
-        cardsEl.innerHTML = '';
-        detailEl.classList.add('active');
-        detailEl.innerHTML = `<div class="error">概览加载失败：${escapeHtml(error.message)}</div>`;
+        overviewEl.innerHTML = `<div class="error">总览加载失败：${escapeHtml(error.message)}</div>`;
+        listEl.innerHTML = '<div class="empty">暂时无法加载节点列表。</div>';
+        detailEl.classList.remove('active');
+        detailEl.innerHTML = '';
       }
     }
 
     async function loadDetail(name) {
       selectedNode = name;
+      renderList();
       try {
         const detail = await api(`/app/data/nodes/${encodeURIComponent(name)}`);
-        renderCards(latestNodes);
         renderDetail(detail);
       } catch (error) {
         detailEl.classList.add('active');
@@ -640,14 +667,32 @@ WEBAPP_HTML = """<!doctype html>
       }
     }
 
-    cardsEl.addEventListener('click', async (event) => {
-      const card = event.target.closest('.card');
+    overviewEl.addEventListener('click', (event) => {
+      const card = event.target.closest('.overview-card');
       if (!card) {
         return;
       }
-      selectedNode = card.dataset.node;
-      renderCards(latestNodes);
-      await loadDetail(selectedNode);
+      selectedOverview = card.dataset.overview;
+      selectedNode = null;
+      renderOverview();
+      renderList();
+      window.scrollTo({ top: document.getElementById('list-panel').offsetTop - 8, behavior: 'smooth' });
+    });
+
+    listEl.addEventListener('click', async (event) => {
+      const card = event.target.closest('.node-card');
+      if (!card) {
+        return;
+      }
+      await loadDetail(card.dataset.node);
+    });
+
+    backBtn.addEventListener('click', () => {
+      selectedOverview = null;
+      selectedNode = null;
+      renderOverview();
+      renderList();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     });
 
     refreshBtn.addEventListener('click', loadOverview);
