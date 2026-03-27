@@ -73,10 +73,7 @@ python -m proxypulse.agent
 - `/nodes`
 - `/node my-node`
 - `/delete_node my-node`
-- `/alerts`
-- `/traffic`
 - `/daily`
-- `/quota my-node`
 - `/dns`
 
 ## 命令说明
@@ -87,12 +84,9 @@ python -m proxypulse.agent
 - `/nodes`：查看已接入节点和最新资源指标。
 - `/node <node_name>`：查看单个节点详情。
 - `/delete_node <node_name>`：删除节点，并在确认后清理其历史指标、告警和流量套餐配置。
-- `/alerts`：查看当前活动告警。
-- `/traffic`：查看最近 24 小时流量汇总。
 - `/daily`：查看上一自然日流量日报。
 - `/dns`：打开 Cloudflare DNS 管理入口。
 - `/dns_zones`：列出当前可管理的 Cloudflare Zone。
-- `/quota <node_name>`：查看节点当前流量套餐状态。
 - `/quota_monthly <node_name> <limitGiB> <reset_day> <HH:MM>`：设置按月重置的流量套餐。
 - `/quota_interval <node_name> <limitGiB> <days> <YYYY-MM-DDTHH:MM>`：设置按固定天数循环重置的流量套餐。
 - `/quota_calibrate <node_name> <usedGiB>`：手动校准本周期已用流量。
@@ -118,9 +112,9 @@ python -m proxypulse.agent
 
 ## 流量报表
 
-- `/traffic` 会根据累计 `RX/TX` 快照计算滚动最近 24 小时流量。
+- 节点概览和节点详情里会直接展示滚动最近 24 小时流量。
 - `/daily` 会根据配置时区展示上一自然日的日报。
-- 到达配置的日报时间后，Bot 也会自动推送一次日报。
+- 默认使用 `Asia/Shanghai`，并在每天 `09:00` 自动推送前一日的日报。
 - 报表按节点分组展示，不做节点排行。
 
 ## 流量套餐
@@ -129,7 +123,7 @@ python -m proxypulse.agent
 - 每个节点可以选择按月重置，或每隔 N 天重置。
 - 套餐使用量基于当前套餐周期内的累计 `RX/TX` 快照增量计算。
 - 手动校准会记录“当前周期已用流量”，后续新的上报会继续在此基础上累加。
-- 节点详情和 `/quota <node_name>` 都会显示套餐状态。
+- 节点概览与节点详情都会显示告警和套餐相关信息。
 - 未显式带时区的时间，按 `PROXYPULSE_REPORT_TIMEZONE` 解释。
 
 ## Cloudflare DNS 管理

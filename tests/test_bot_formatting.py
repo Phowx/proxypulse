@@ -18,9 +18,8 @@ class BotFormattingTests(TestCase):
     def test_dashboard_button_rows_use_three_columns_when_webapp_available(self) -> None:
         rows = dashboard_button_rows(include_webapp=True)
 
-        self.assertEqual(rows[0], ["节点概览", "告警中心", "24h 流量"])
-        self.assertEqual(rows[1], ["流量日报", "流量套餐", "DNS 管理"])
-        self.assertEqual(rows[2], ["Web 面板"])
+        self.assertEqual(rows[0], ["节点概览", "流量日报", "DNS 管理"])
+        self.assertEqual(rows[1], ["Web 面板"])
 
     def test_webapp_button_requires_https(self) -> None:
         self.assertTrue(is_supported_webapp_url("https://example.com/app"))

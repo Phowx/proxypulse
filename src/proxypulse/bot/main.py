@@ -444,8 +444,7 @@ def render_dns_delete_preview(record: CloudflareDNSRecord, zone_name: str) -> st
 
 def dashboard_button_rows(include_webapp: bool) -> list[list[str]]:
     rows = [
-        [MENU_NODES, MENU_ALERTS, MENU_TRAFFIC],
-        [MENU_DAILY, MENU_QUOTA, MENU_DNS],
+        [MENU_NODES, MENU_DAILY, MENU_DNS],
     ]
     if include_webapp:
         rows.append([MENU_WEBAPP])
@@ -1845,12 +1844,9 @@ async def run_polling() -> None:
             BotCommand(command="nodes", description="查看节点列表"),
             BotCommand(command="node", description="查看节点详情"),
             BotCommand(command="delete_node", description="删除节点并清理数据"),
-            BotCommand(command="alerts", description="查看活动告警"),
-            BotCommand(command="traffic", description="查看近24小时流量"),
             BotCommand(command="daily", description="查看前一日流量日报"),
             BotCommand(command="dns", description="打开 Cloudflare DNS 管理"),
             BotCommand(command="dns_zones", description="列出可管理 DNS Zone"),
-            BotCommand(command="quota", description="查看节点流量套餐"),
             BotCommand(command="quota_monthly", description="设置按月流量套餐"),
             BotCommand(command="quota_interval", description="设置按天循环套餐"),
             BotCommand(command="quota_calibrate", description="校准节点已用流量"),

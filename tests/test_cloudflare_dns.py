@@ -12,6 +12,13 @@ from proxypulse.services.cloudflare_dns import CloudflareDNSService, CloudflareS
 
 
 class CloudflareConfigTests(TestCase):
+    def test_report_defaults_match_daily_digest_schedule(self) -> None:
+        settings = Settings()
+
+        self.assertEqual(settings.report_timezone, "Asia/Shanghai")
+        self.assertEqual(settings.daily_report_hour, 9)
+        self.assertEqual(settings.daily_report_minute, 0)
+
     def test_cloudflare_zones_parse_json_mapping(self) -> None:
         with patch.dict(
             os.environ,
