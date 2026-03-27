@@ -73,13 +73,11 @@ logger = logging.getLogger(__name__)
 MENU_NODES = "节点概览"
 MENU_TRAFFIC = "24h 流量"
 MENU_DAILY = "流量日报"
-MENU_QUOTA = "流量套餐"
 MENU_WEBAPP = "Web 面板"
 MENU_DNS = "DNS 管理"
 CALLBACK_SHOW_NODES = "show:nodes"
 CALLBACK_SHOW_TRAFFIC = "show:traffic"
 CALLBACK_SHOW_DAILY = "show:daily"
-CALLBACK_SHOW_QUOTA_HELP = "show:quota_help"
 CALLBACK_SHOW_MENU = "show:menu"
 CALLBACK_NODE_PREFIX = "node:"
 CALLBACK_NODE_DELETE_PREFIX = "node_delete:"
@@ -1036,13 +1034,6 @@ async def menu_daily_handler(message: Message) -> None:
     await daily_handler(message)
 
 
-@router.message(F.text == MENU_QUOTA)
-async def menu_quota_help_handler(message: Message) -> None:
-    if await reject_if_not_admin(message):
-        return
-    await message.answer("\n".join(render_quota_help_lines()))
-
-
 @router.message(F.text == MENU_DNS)
 async def menu_dns_handler(message: Message) -> None:
     await dns_handler(message)
@@ -1344,18 +1335,6 @@ async def show_daily_callback(callback: CallbackQuery) -> None:
         return
     text, keyboard = await render_daily_response()
     await safe_edit_callback_message(callback, text, keyboard)
-
-
-@router.callback_query(F.data == CALLBACK_SHOW_QUOTA_HELP)
-async def show_quota_help_callback(callback: CallbackQuery) -> None:
-    if not callback.from_user or callback.from_user.id not in settings.admin_telegram_ids:
-        await callback.answer("无权访问。", show_alert=True)
-        return
-    await safe_edit_callback_message(
-        callback,
-        "\n".join(render_quota_help_lines()),
-        build_single_action_keyboard(CALLBACK_SHOW_QUOTA_HELP),
-    )
 
 
 @router.callback_query(F.data == CALLBACK_DNS_HOME)
@@ -1770,6 +1749,7 @@ async def run_polling() -> None:
             BotCommand(command="delete_node", description="删除节点并清理数据"),
             BotCommand(command="traffic", description="查看近24小时流量"),
             BotCommand(command="daily", description="查看前一日流量日报"),
+            BotCommand(command="quota", description="查看节点流量套餐"),
             BotCommand(command="dns", description="打开 Cloudflare DNS 管理"),
             BotCommand(command="dns_zones", description="列出可管理 DNS Zone"),
             BotCommand(command="quota_monthly", description="设置按月流量套餐"),
