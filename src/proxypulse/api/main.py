@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from fastapi import Depends, FastAPI, Header, HTTPException, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.responses import HTMLResponse
+from pydantic import ValidationError
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 import uvicorn
@@ -16,10 +17,15 @@ from proxypulse.core.schemas import (
     MetricSnapshotIn,
     NodeDetail,
     NodeSummary,
+    ExternalNetworkIdentityRequest,
 )
 from proxypulse.core.webapp_auth import validate_webapp_access_token
 from proxypulse.services.alerts import list_active_alerts_for_node
 from proxypulse.services.dashboard import build_node_detail_summary, build_nodes_dashboard
+from proxypulse.services.external_notifications import (
+    ExternalNotificationServiceError,
+    send_external_network_identity_notification,
+)
 from proxypulse.services.nodes import (
     NodeServiceError,
     get_node_by_agent_token,
@@ -54,6 +60,13 @@ def resolve_webapp_url() -> str:
     if settings.webapp_url:
         return settings.webapp_url.rstrip("/")
     return f"{settings.server_url.rstrip('/')}/app"
+
+
+def require_external_notify_secret(authorization: str | None) -> None:
+    if not settings.external_notify_secret:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="External notify secret is not configured.")
+    if extract_bearer_token(authorization) != settings.external_notify_secret:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid external notify secret.")
 
 
 def require_webapp_admin(
@@ -316,6 +329,35 @@ async def webapp_node_detail(
             for alert in active_alerts
         ],
     }
+
+
+@app.post("/integrations/network-identity")
+async def integrations_network_identity(
+    request: Request,
+    authorization: str | None = Header(default=None),
+) -> dict[str, int | str]:
+    require_external_notify_secret(authorization)
+    try:
+        raw_payload = await request.json()
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid JSON payload.") from exc
+
+    try:
+        payload = ExternalNetworkIdentityRequest.model_validate(raw_payload)
+    except ValidationError as exc:
+        first_error = exc.errors(include_url=False)[0]
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(first_error.get("msg", "Invalid payload."))) from exc
+
+    try:
+        delivered_to = await send_external_network_identity_notification(
+            payload,
+            bot_token=settings.bot_token,
+            admin_ids=settings.admin_telegram_ids,
+        )
+    except ExternalNotificationServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+    return {"status": "sent", "delivered_to": delivered_to}
 
 
 @app.post("/agent/register", response_model=AgentRegisterResponse)

@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     server_url: str = "http://localhost:8080"
     bot_token: str = ""
     webapp_url: str = ""
+    external_notify_secret: str = ""
     admin_telegram_ids_raw: str = Field(default="", alias="admin_telegram_ids")
     poll_interval_seconds: int = 15
     agent_name: str = Field(default_factory=socket.gethostname)
