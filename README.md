@@ -73,6 +73,7 @@ python -m proxypulse.agent
 - `/nodes`
 - `/node my-node`
 - `/delete_node my-node`
+- `/traffic`
 - `/daily`
 - `/dns`
 
@@ -84,6 +85,7 @@ python -m proxypulse.agent
 - `/nodes`：查看已接入节点和最新资源指标。
 - `/node <node_name>`：查看单个节点详情。
 - `/delete_node <node_name>`：删除节点，并在确认后清理其历史指标、告警和流量套餐配置。
+- `/traffic`：查看最近 24 小时流量汇总。
 - `/daily`：查看上一自然日流量日报。
 - `/dns`：打开 Cloudflare DNS 管理入口。
 - `/dns_zones`：列出当前可管理的 Cloudflare Zone。
@@ -97,6 +99,7 @@ python -m proxypulse.agent
 - 当 CPU、内存、磁盘使用率超过阈值时，会触发资源告警。
 - 当节点超过 `PROXYPULSE_OFFLINE_AFTER_SECONDS` 未上报时，会触发离线告警。
 - 告警触发和恢复都会通过 Telegram 发送给所有管理员。
+- Bot 内不再提供单独的“告警中心”查看页。
 
 关键环境变量：
 
@@ -112,7 +115,7 @@ python -m proxypulse.agent
 
 ## 流量报表
 
-- 节点概览和节点详情里会直接展示滚动最近 24 小时流量。
+- `/traffic` 会根据累计 `RX/TX` 快照计算滚动最近 24 小时流量。
 - `/daily` 会根据配置时区展示上一自然日的日报。
 - 默认使用 `Asia/Shanghai`，并在每天 `09:00` 自动推送前一日的日报。
 - 报表按节点分组展示，不做节点排行。
@@ -123,7 +126,7 @@ python -m proxypulse.agent
 - 每个节点可以选择按月重置，或每隔 N 天重置。
 - 套餐使用量基于当前套餐周期内的累计 `RX/TX` 快照增量计算。
 - 手动校准会记录“当前周期已用流量”，后续新的上报会继续在此基础上累加。
-- 节点概览与节点详情都会显示告警和套餐相关信息。
+- 套餐信息会显示在节点详情的底部。
 - 未显式带时区的时间，按 `PROXYPULSE_REPORT_TIMEZONE` 解释。
 
 ## Cloudflare DNS 管理

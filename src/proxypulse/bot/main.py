@@ -26,8 +26,6 @@ from proxypulse.core.config import get_settings
 from proxypulse.core.db import SessionLocal, init_db
 from proxypulse.services.alerts import (
     format_alert_message,
-    list_active_alerts,
-    list_active_alerts_for_node,
     list_pending_notifications,
     mark_notified,
     mark_stale_nodes_offline,
@@ -73,14 +71,12 @@ router = Router()
 logger = logging.getLogger(__name__)
 
 MENU_NODES = "节点概览"
-MENU_ALERTS = "告警中心"
 MENU_TRAFFIC = "24h 流量"
 MENU_DAILY = "流量日报"
 MENU_QUOTA = "流量套餐"
 MENU_WEBAPP = "Web 面板"
 MENU_DNS = "DNS 管理"
 CALLBACK_SHOW_NODES = "show:nodes"
-CALLBACK_SHOW_ALERTS = "show:alerts"
 CALLBACK_SHOW_TRAFFIC = "show:traffic"
 CALLBACK_SHOW_DAILY = "show:daily"
 CALLBACK_SHOW_QUOTA_HELP = "show:quota_help"
@@ -625,12 +621,6 @@ def format_network_counter_pair(left_value: int | None, right_value: int | None)
     return f"{format_integer_value(left_value)} / {format_integer_value(right_value)}"
 
 
-def format_alert_badge(count: int) -> str:
-    if count <= 0:
-        return "无活动告警"
-    return f"{count} 条活动告警"
-
-
 def render_section(title: str, rows: list[str]) -> list[str]:
     return [f"── {title}", *rows]
 
@@ -702,7 +692,7 @@ def render_node_card(card) -> str:
             "资源",
             [
                 ("CPU", format_metric_value(node.latest_cpu_percent), "内存", format_metric_value(node.latest_memory_percent)),
-                ("磁盘", format_metric_value(node.latest_disk_percent), "告警", format_alert_badge(card.active_alert_count)),
+                ("磁盘", format_metric_value(node.latest_disk_percent), None, None),
             ],
         ),
         "",
@@ -710,7 +700,6 @@ def render_node_card(card) -> str:
             "流量",
             [
                 ("下行", format_rate_value(card.current_rate.rx_bps), "上行", format_rate_value(card.current_rate.tx_bps)),
-                ("24h↓", format_byte_value(card.traffic_24h.rx_bytes), "24h↑", format_byte_value(card.traffic_24h.tx_bytes)),
             ],
         ),
     ]
@@ -800,8 +789,7 @@ async def render_nodes_response() -> tuple[str, InlineKeyboardMarkup | None]:
             "总览",
             [
                 ("在线", str(overview.online_count), "离线", str(overview.offline_count)),
-                ("待接入", str(overview.pending_count), "告警", str(overview.active_alert_count)),
-                ("24h", format_byte_value(overview.total_bytes_24h), None, None),
+                ("待接入", str(overview.pending_count), None, None),
             ],
         ),
     ]
@@ -816,11 +804,9 @@ async def render_node_detail(node_name: str) -> tuple[str, InlineKeyboardMarkup]
         if node is None:
             quota_status = None
             detail_summary = None
-            active_alerts = []
         else:
             quota_status = await get_quota_status(session, node)
             detail_summary = await build_node_detail_summary(session, node)
-            active_alerts = await list_active_alerts_for_node(session, node.id)
     if node is None:
         return "未找到对应节点。", build_single_action_keyboard(CALLBACK_SHOW_NODES)
 
@@ -829,7 +815,7 @@ async def render_node_detail(node_name: str) -> tuple[str, InlineKeyboardMarkup]
         f"🖥️ 节点详情 | {node.name}",
         "",
         render_metric_pair("状态", format_status_label(node), "上报", format_relative_time(node.last_seen_at)),
-        render_metric_pair("网卡", format_network_interface_label(node.latest_network_interface), "告警", format_alert_badge(detail_summary.active_alert_count)),
+        render_metric_single("网卡", format_network_interface_label(node.latest_network_interface)),
         "",
         *render_metric_block(
             "基础信息",
@@ -871,19 +857,10 @@ async def render_node_detail(node_name: str) -> tuple[str, InlineKeyboardMarkup]
         ),
         "",
         *render_metric_block(
-            "近 24 小时 / 套餐",
-            [
-                ("24h↓", format_byte_value(detail_summary.traffic_24h.rx_bytes), "24h↑", format_byte_value(detail_summary.traffic_24h.tx_bytes)),
-                ("24h合计", format_byte_value(detail_summary.traffic_24h.total_bytes), None, None),
-                *quota_lines,
-            ],
+            "流量套餐",
+            quota_lines,
         ),
     ]
-    if active_alerts:
-        lines.extend(["", "── 当前告警"])
-        for alert in active_alerts:
-            severity_icon = "⛔" if alert.severity == "critical" else "⚠️"
-            lines.append(f"{severity_icon} {alert.summary}")
     return "\n".join(lines), build_node_detail_keyboard(node.name)
 
 
@@ -905,32 +882,6 @@ async def render_node_delete_confirm(node_name: str) -> tuple[str, InlineKeyboar
         "确认删除吗？",
     ]
     return "\n".join(lines), build_node_delete_confirm_keyboard(node.name)
-
-
-async def render_alerts_response() -> tuple[str, InlineKeyboardMarkup]:
-    async with SessionLocal() as session:
-        await mark_stale_nodes_offline(session)
-        await session.commit()
-        active_alerts = await list_active_alerts(session, limit=10)
-
-    if not active_alerts:
-        return "🚨 告警中心\n当前没有活动告警。", build_single_action_keyboard(CALLBACK_SHOW_ALERTS)
-
-    lines = [
-        "🚨 告警中心",
-        "",
-        *render_metric_block("总览", [("活动告警", str(len(active_alerts)), None, None)]),
-    ]
-    for alert, node in active_alerts:
-        severity = "严重" if alert.severity == "critical" else "警告"
-        severity_icon = "⛔" if alert.severity == "critical" else "⚠️"
-        lines.append(
-            f"━━━━━━━━━━\n"
-            f"{severity_icon} {node.name}\n"
-            f"{render_metric_pair('级别', severity, '状态', format_status_label(node))}\n"
-            f"摘要 {alert.summary}"
-        )
-    return "\n".join(lines), build_single_action_keyboard(CALLBACK_SHOW_ALERTS)
 
 
 async def render_traffic_response() -> tuple[str, InlineKeyboardMarkup]:
@@ -1080,16 +1031,6 @@ async def menu_nodes_handler(message: Message) -> None:
     await nodes_handler(message)
 
 
-@router.message(F.text == MENU_ALERTS)
-async def menu_alerts_handler(message: Message) -> None:
-    await alerts_handler(message)
-
-
-@router.message(F.text == MENU_TRAFFIC)
-async def menu_traffic_handler(message: Message) -> None:
-    await traffic_handler(message)
-
-
 @router.message(F.text == MENU_DAILY)
 async def menu_daily_handler(message: Message) -> None:
     await daily_handler(message)
@@ -1181,14 +1122,6 @@ async def delete_node_handler(message: Message, command: CommandObject) -> None:
         await message.answer("用法：/delete_node <节点名>")
         return
     text, keyboard = await render_node_delete_confirm(node_name)
-    await message.answer(render_panel(text), parse_mode="HTML", reply_markup=keyboard)
-
-
-@router.message(Command("alerts"))
-async def alerts_handler(message: Message) -> None:
-    if await reject_if_not_admin(message):
-        return
-    text, keyboard = await render_alerts_response()
     await message.answer(render_panel(text), parse_mode="HTML", reply_markup=keyboard)
 
 
@@ -1392,15 +1325,6 @@ async def show_nodes_callback(callback: CallbackQuery) -> None:
         await callback.answer("无权访问。", show_alert=True)
         return
     text, keyboard = await render_nodes_response()
-    await safe_edit_callback_message(callback, text, keyboard)
-
-
-@router.callback_query(F.data == CALLBACK_SHOW_ALERTS)
-async def show_alerts_callback(callback: CallbackQuery) -> None:
-    if not callback.from_user or callback.from_user.id not in settings.admin_telegram_ids:
-        await callback.answer("无权访问。", show_alert=True)
-        return
-    text, keyboard = await render_alerts_response()
     await safe_edit_callback_message(callback, text, keyboard)
 
 
@@ -1844,6 +1768,7 @@ async def run_polling() -> None:
             BotCommand(command="nodes", description="查看节点列表"),
             BotCommand(command="node", description="查看节点详情"),
             BotCommand(command="delete_node", description="删除节点并清理数据"),
+            BotCommand(command="traffic", description="查看近24小时流量"),
             BotCommand(command="daily", description="查看前一日流量日报"),
             BotCommand(command="dns", description="打开 Cloudflare DNS 管理"),
             BotCommand(command="dns_zones", description="列出可管理 DNS Zone"),

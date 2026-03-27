@@ -47,7 +47,7 @@ class BotFormattingTests(TestCase):
 
         self.assertIn("hk-01", rendered)
         self.assertIn("🔴 离线", rendered)
-        self.assertIn("2 条活动告警", rendered)
         self.assertIn("暂无", rendered)
         self.assertIn("CPU 暂无", rendered)
-        self.assertIn("暂无", rendered)
+        self.assertNotIn("24h↓", rendered)
+        self.assertNotIn("告警", rendered)
