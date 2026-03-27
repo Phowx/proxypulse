@@ -774,6 +774,18 @@ async def safe_edit_callback_message(callback: CallbackQuery, text: str, reply_m
     await callback.answer()
 
 
+async def safe_clear_callback_markup(callback: CallbackQuery) -> None:
+    if callback.message is None:
+        await callback.answer()
+        return
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except TelegramBadRequest as exc:
+        if "message is not modified" not in str(exc).lower():
+            raise
+    await callback.answer("已返回底部菜单。")
+
+
 async def render_nodes_response() -> tuple[str, InlineKeyboardMarkup | None]:
     async with SessionLocal() as session:
         nodes = await list_nodes(session)
@@ -1372,9 +1384,7 @@ async def menu_callback_handler(callback: CallbackQuery) -> None:
     if not callback.from_user or callback.from_user.id not in settings.admin_telegram_ids:
         await callback.answer("无权访问。", show_alert=True)
         return
-    if callback.message is not None:
-        await callback.message.answer(build_dashboard_menu_text(), reply_markup=build_dashboard_keyboard())
-    await callback.answer()
+    await safe_clear_callback_markup(callback)
 
 
 @router.callback_query(F.data == CALLBACK_SHOW_NODES)
