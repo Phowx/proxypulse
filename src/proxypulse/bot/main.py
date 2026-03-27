@@ -3,7 +3,9 @@ from __future__ import annotations
 import asyncio
 import html
 import logging
+from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Literal
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot, Dispatcher, F, Router
@@ -31,6 +33,13 @@ from proxypulse.services.alerts import (
     mark_stale_nodes_offline,
 )
 from proxypulse.services.dashboard import build_node_detail_summary, build_nodes_dashboard
+from proxypulse.services.cloudflare_dns import (
+    SUPPORTED_DNS_RECORD_TYPES,
+    CloudflareDNSRecord,
+    CloudflareDNSRecordPage,
+    CloudflareDNSService,
+    CloudflareServiceError,
+)
 from proxypulse.services.nodes import (
     NodeServiceError,
     create_or_refresh_enrollment,
@@ -69,6 +78,7 @@ MENU_TRAFFIC = "24h 流量"
 MENU_DAILY = "流量日报"
 MENU_QUOTA = "流量套餐"
 MENU_WEBAPP = "Web 面板"
+MENU_DNS = "DNS 管理"
 CALLBACK_SHOW_NODES = "show:nodes"
 CALLBACK_SHOW_ALERTS = "show:alerts"
 CALLBACK_SHOW_TRAFFIC = "show:traffic"
@@ -79,11 +89,66 @@ CALLBACK_NODE_PREFIX = "node:"
 CALLBACK_NODE_DELETE_PREFIX = "node_delete:"
 CALLBACK_NODE_DELETE_CONFIRM_PREFIX = "node_delete_confirm:"
 CALLBACK_NODE_DELETE_CANCEL_PREFIX = "node_delete_cancel:"
+CALLBACK_DNS_HOME = "dns:home"
+CALLBACK_DNS_ZONE_PREFIX = "dns:zone:"
+CALLBACK_DNS_LIST_PREFIX = "dns:list:"
+CALLBACK_DNS_RECORD_PREFIX = "dns:record:"
+CALLBACK_DNS_CREATE_PREFIX = "dns:create:"
+CALLBACK_DNS_TYPE_PREFIX = "dns:type:"
+CALLBACK_DNS_UPDATE_PREFIX = "dns:update:"
+CALLBACK_DNS_DELETE_PREFIX = "dns:delete:"
+CALLBACK_DNS_KEEP_PREFIX = "dns:keep:"
+CALLBACK_DNS_TTL_PREFIX = "dns:ttl:"
+CALLBACK_DNS_PROXIED_PREFIX = "dns:proxied:"
+CALLBACK_DNS_CONFIRM_PREFIX = "dns:confirm:"
+CALLBACK_DNS_CANCEL = "dns:cancel"
 STATUS_STYLE = {
     "online": ("🟢", "在线"),
     "pending": ("🟡", "待接入"),
     "offline": ("🔴", "离线"),
 }
+DNS_TTL_OPTIONS = [
+    (1, "Auto"),
+    (60, "60s"),
+    (300, "5m"),
+    (600, "10m"),
+    (3600, "1h"),
+]
+DNS_PAGE_SIZE = 10
+
+
+@dataclass(slots=True)
+class DnsDraft:
+    mode: Literal["create", "update"]
+    zone_key: str
+    record_type: str
+    record_id: str | None = None
+    name: str = ""
+    content: str = ""
+    ttl: int = 1
+    proxied: bool | None = None
+    pending_field: Literal["name", "content"] | None = None
+    original_record: CloudflareDNSRecord | None = None
+
+
+@dataclass(slots=True)
+class DnsPendingAction:
+    action: Literal["create", "update", "delete"]
+    zone_key: str
+    record_id: str | None = None
+    draft: DnsDraft | None = None
+
+
+@dataclass(slots=True)
+class DnsSession:
+    zone_key: str | None = None
+    page: int = 1
+    selected_record_id: str | None = None
+    draft: DnsDraft | None = None
+    pending_action: DnsPendingAction | None = None
+
+
+DNS_SESSIONS: dict[int, DnsSession] = {}
 
 
 def is_admin(message: Message) -> bool:
@@ -97,13 +162,293 @@ async def reject_if_not_admin(message: Message) -> bool:
     return True
 
 
+def get_dns_session(user_id: int) -> DnsSession:
+    return DNS_SESSIONS.setdefault(user_id, DnsSession())
+
+
+def reset_dns_session(user_id: int) -> DnsSession:
+    DNS_SESSIONS[user_id] = DnsSession()
+    return DNS_SESSIONS[user_id]
+
+
+def get_dns_service() -> CloudflareDNSService:
+    return CloudflareDNSService.from_settings(settings)
+
+
+def format_dns_ttl(ttl: int) -> str:
+    if ttl == 1:
+        return "Auto"
+    return f"{ttl}s"
+
+
+def format_dns_proxied(value: bool | None) -> str:
+    if value is None:
+        return "不适用"
+    return "已代理" if value else "仅 DNS"
+
+
+def summarize_dns_content(content: str, limit: int = 26) -> str:
+    if len(content) <= limit:
+        return content
+    return f"{content[: limit - 1]}…"
+
+
+def parse_dns_list_callback(data: str) -> tuple[str, int]:
+    _, _, zone_key, page_text = data.split(":", 3)
+    return zone_key, max(int(page_text), 1)
+
+
+def parse_dns_record_callback(data: str) -> tuple[str, str]:
+    _, _, zone_key, record_id = data.split(":", 3)
+    return zone_key, record_id
+
+
+def build_dns_home_keyboard(service: CloudflareDNSService) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(text=f"{zone.zone_name} · {zone.key}", callback_data=f"{CALLBACK_DNS_ZONE_PREFIX}{zone.key}")]
+        for zone in service.list_configured_zones()
+    ]
+    rows.append([InlineKeyboardButton(text="返回菜单", callback_data=CALLBACK_SHOW_MENU)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def build_dns_zone_keyboard(zone_key: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="查看记录", callback_data=f"{CALLBACK_DNS_LIST_PREFIX}{zone_key}:1")],
+            [InlineKeyboardButton(text="新增记录", callback_data=f"{CALLBACK_DNS_CREATE_PREFIX}{zone_key}")],
+            [InlineKeyboardButton(text="切换 Zone", callback_data=CALLBACK_DNS_HOME)],
+            [InlineKeyboardButton(text="返回菜单", callback_data=CALLBACK_SHOW_MENU)],
+        ]
+    )
+
+
+def build_dns_record_list_keyboard(record_page: CloudflareDNSRecordPage) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for record in record_page.records:
+        proxied_suffix = ""
+        if record.proxied is not None:
+            proxied_suffix = " · 代理" if record.proxied else " · DNS"
+        label = f"{record.name} · {record.type} · {summarize_dns_content(record.content, 18)}{proxied_suffix}"
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=label,
+                    callback_data=f"{CALLBACK_DNS_RECORD_PREFIX}{record_page.zone.key}:{record.id}",
+                )
+            ]
+        )
+    pager_row: list[InlineKeyboardButton] = []
+    if record_page.page > 1:
+        pager_row.append(
+            InlineKeyboardButton(
+                text="上一页",
+                callback_data=f"{CALLBACK_DNS_LIST_PREFIX}{record_page.zone.key}:{record_page.page - 1}",
+            )
+        )
+    if record_page.page < record_page.total_pages:
+        pager_row.append(
+            InlineKeyboardButton(
+                text="下一页",
+                callback_data=f"{CALLBACK_DNS_LIST_PREFIX}{record_page.zone.key}:{record_page.page + 1}",
+            )
+        )
+    if pager_row:
+        rows.append(pager_row)
+    rows.append([InlineKeyboardButton(text="刷新列表", callback_data=f"{CALLBACK_DNS_LIST_PREFIX}{record_page.zone.key}:{record_page.page}")])
+    rows.append([InlineKeyboardButton(text="新增记录", callback_data=f"{CALLBACK_DNS_CREATE_PREFIX}{record_page.zone.key}")])
+    rows.append([InlineKeyboardButton(text="返回 Zone", callback_data=f"{CALLBACK_DNS_ZONE_PREFIX}{record_page.zone.key}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def build_dns_record_detail_keyboard(zone_key: str, record_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="更新记录", callback_data=f"{CALLBACK_DNS_UPDATE_PREFIX}{zone_key}:{record_id}")],
+            [InlineKeyboardButton(text="删除记录", callback_data=f"{CALLBACK_DNS_DELETE_PREFIX}{zone_key}:{record_id}")],
+            [InlineKeyboardButton(text="返回列表", callback_data=f"{CALLBACK_DNS_LIST_PREFIX}{zone_key}:1")],
+            [InlineKeyboardButton(text="切换 Zone", callback_data=f"{CALLBACK_DNS_ZONE_PREFIX}{zone_key}")],
+        ]
+    )
+
+
+def build_dns_type_keyboard(zone_key: str) -> InlineKeyboardMarkup:
+    rows = [[InlineKeyboardButton(text=record_type, callback_data=f"{CALLBACK_DNS_TYPE_PREFIX}{zone_key}:{record_type}")] for record_type in SUPPORTED_DNS_RECORD_TYPES]
+    rows.append([InlineKeyboardButton(text="取消", callback_data=CALLBACK_DNS_CANCEL)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def build_dns_prompt_keyboard(*, can_keep: bool) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    if can_keep:
+        rows.append(
+            [
+                InlineKeyboardButton(text="保留原值", callback_data=f"{CALLBACK_DNS_KEEP_PREFIX}current"),
+            ]
+        )
+    rows.append([InlineKeyboardButton(text="取消", callback_data=CALLBACK_DNS_CANCEL)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def build_dns_ttl_keyboard(*, current_ttl: int | None, allow_keep: bool) -> InlineKeyboardMarkup:
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=f"{label}{' ✓' if current_ttl == ttl else ''}",
+                callback_data=f"{CALLBACK_DNS_TTL_PREFIX}{ttl}",
+            )
+        ]
+        for ttl, label in DNS_TTL_OPTIONS
+    ]
+    if allow_keep:
+        rows.append([InlineKeyboardButton(text="保留原值", callback_data=f"{CALLBACK_DNS_KEEP_PREFIX}ttl")])
+    rows.append([InlineKeyboardButton(text="取消", callback_data=CALLBACK_DNS_CANCEL)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def build_dns_proxied_keyboard(*, current_value: bool | None, allow_keep: bool) -> InlineKeyboardMarkup:
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=f"已代理{' ✓' if current_value is True else ''}",
+                callback_data=f"{CALLBACK_DNS_PROXIED_PREFIX}1",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=f"仅 DNS{' ✓' if current_value is False else ''}",
+                callback_data=f"{CALLBACK_DNS_PROXIED_PREFIX}0",
+            )
+        ],
+    ]
+    if allow_keep:
+        rows.append([InlineKeyboardButton(text="保留原值", callback_data=f"{CALLBACK_DNS_KEEP_PREFIX}proxied")])
+    rows.append([InlineKeyboardButton(text="取消", callback_data=CALLBACK_DNS_CANCEL)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def build_dns_confirm_keyboard(action: Literal["create", "update", "delete"]) -> InlineKeyboardMarkup:
+    action_label = {
+        "create": "确认新增",
+        "update": "确认更新",
+        "delete": "确认删除",
+    }[action]
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=action_label, callback_data=f"{CALLBACK_DNS_CONFIRM_PREFIX}{action}")],
+            [InlineKeyboardButton(text="取消", callback_data=CALLBACK_DNS_CANCEL)],
+        ]
+    )
+
+
+def render_dns_record_text(record: CloudflareDNSRecord, zone_name: str) -> str:
+    lines = [
+        f"☁️ DNS 记录 | {record.name}",
+        "",
+        f"Zone {zone_name}",
+        f"类型 {record.type}",
+        f"值 {record.content}",
+        f"TTL {format_dns_ttl(record.ttl)}",
+        f"代理 {format_dns_proxied(record.proxied)}",
+    ]
+    if record.comment:
+        lines.append(f"备注 {record.comment}")
+    return "\n".join(lines)
+
+
+def render_dns_draft_preview(draft: DnsDraft, zone_name: str) -> str:
+    action_label = "新增记录" if draft.mode == "create" else "更新记录"
+    lines = [
+        f"☁️ DNS 预览 | {action_label}",
+        "",
+        f"Zone {zone_name}",
+        f"类型 {draft.record_type}",
+        f"名称 {draft.name}",
+        f"值 {draft.content}",
+        f"TTL {format_dns_ttl(draft.ttl)}",
+    ]
+    if draft.record_type in {"A", "AAAA", "CNAME"}:
+        lines.append(f"代理 {format_dns_proxied(draft.proxied)}")
+    if draft.mode == "update" and draft.original_record is not None:
+        lines.extend(
+            [
+                "",
+                "当前值",
+                f"• 名称 {draft.original_record.name}",
+                f"• 值 {draft.original_record.content}",
+                f"• TTL {format_dns_ttl(draft.original_record.ttl)}",
+                f"• 代理 {format_dns_proxied(draft.original_record.proxied)}",
+            ]
+        )
+    return "\n".join(lines)
+
+
+def render_dns_list_text(record_page: CloudflareDNSRecordPage) -> str:
+    lines = [
+        f"☁️ DNS 列表 | {record_page.zone.zone_name}",
+        "",
+        f"页码 {record_page.page}/{record_page.total_pages}",
+        f"记录 {record_page.total_count} 条",
+        "",
+        "点击下方记录进入详情。",
+    ]
+    if not record_page.records:
+        lines.extend(["", "当前 Zone 还没有受支持的记录类型。"])
+    return "\n".join(lines)
+
+
+def render_dns_zone_text(zone_name: str, zone_key: str) -> str:
+    return "\n".join(
+        [
+            f"☁️ DNS 管理 | {zone_name}",
+            "",
+            f"标识 {zone_key}",
+            "选择要执行的操作。",
+        ]
+    )
+
+
+def render_dns_home_text(service: CloudflareDNSService) -> str:
+    lines = [
+        "☁️ DNS 管理",
+        "",
+        f"已配置 Zone {len(service.list_configured_zones())} 个",
+        "先选择一个 Zone，再查看记录或新增记录。",
+    ]
+    return "\n".join(lines)
+
+
+def render_dns_prompt_text(*, title: str, field_label: str, hint: str, current_value: str | None = None) -> str:
+    lines = [f"☁️ DNS 流程 | {title}", "", f"请发送 {field_label}。", hint]
+    if current_value:
+        lines.extend(["", f"当前值 {current_value}"])
+    return "\n".join(lines)
+
+
+def render_dns_delete_preview(record: CloudflareDNSRecord, zone_name: str) -> str:
+    return "\n".join(
+        [
+            f"☁️ DNS 预览 | 删除记录",
+            "",
+            f"Zone {zone_name}",
+            f"名称 {record.name}",
+            f"类型 {record.type}",
+            f"值 {record.content}",
+            f"TTL {format_dns_ttl(record.ttl)}",
+            f"代理 {format_dns_proxied(record.proxied)}",
+            "",
+            "确认删除吗？",
+        ]
+    )
+
+
 def dashboard_button_rows(include_webapp: bool) -> list[list[str]]:
     rows = [
         [MENU_NODES, MENU_ALERTS, MENU_TRAFFIC],
-        [MENU_DAILY, MENU_QUOTA],
+        [MENU_DAILY, MENU_QUOTA, MENU_DNS],
     ]
     if include_webapp:
-        rows[1].append(MENU_WEBAPP)
+        rows.append([MENU_WEBAPP])
     return rows
 
 
@@ -598,6 +943,115 @@ async def render_quota_response(node_name: str) -> str:
     return "\n".join([f"🧾 套餐状态 | {node_name}", "", *render_metric_block("套餐", format_quota_compact_lines(status))])
 
 
+async def render_dns_home() -> tuple[str, InlineKeyboardMarkup | None]:
+    try:
+        service = get_dns_service()
+        return render_dns_home_text(service), build_dns_home_keyboard(service)
+    except (CloudflareServiceError, ValueError) as exc:
+        return f"☁️ DNS 管理\n\n{exc}", build_single_action_keyboard(CALLBACK_SHOW_MENU)
+
+
+async def render_dns_zone(zone_key: str) -> tuple[str, InlineKeyboardMarkup]:
+    service = get_dns_service()
+    zone = service.get_zone(zone_key)
+    return render_dns_zone_text(zone.zone_name, zone.key), build_dns_zone_keyboard(zone.key)
+
+
+async def render_dns_record_list(zone_key: str, *, page: int) -> tuple[str, InlineKeyboardMarkup]:
+    service = get_dns_service()
+    record_page = await service.list_dns_records(zone_key, page=page, per_page=DNS_PAGE_SIZE)
+    return render_dns_list_text(record_page), build_dns_record_list_keyboard(record_page)
+
+
+async def render_dns_record_detail(zone_key: str, record_id: str) -> tuple[str, InlineKeyboardMarkup]:
+    service = get_dns_service()
+    zone = service.get_zone(zone_key)
+    record = await service.get_dns_record(zone_key, record_id)
+    return render_dns_record_text(record, zone.zone_name), build_dns_record_detail_keyboard(zone_key, record_id)
+
+
+async def prompt_dns_name(message_or_callback: Message | CallbackQuery, draft: DnsDraft) -> None:
+    draft.pending_field = "name"
+    current_value = draft.original_record.name if draft.original_record else None
+    text = render_dns_prompt_text(
+        title="填写名称",
+        field_label="记录名称",
+        hint="例如：api 或 api.example.com",
+        current_value=current_value,
+    )
+    keyboard = build_dns_prompt_keyboard(can_keep=draft.mode == "update")
+    if isinstance(message_or_callback, CallbackQuery):
+        await safe_edit_callback_message(message_or_callback, text, keyboard)
+    else:
+        await message_or_callback.answer(render_panel(text), parse_mode="HTML", reply_markup=keyboard)
+
+
+async def prompt_dns_content(target: Message | CallbackQuery, draft: DnsDraft) -> None:
+    draft.pending_field = "content"
+    text = render_dns_prompt_text(
+        title="填写记录值",
+        field_label="记录值",
+        hint="A/AAAA 填 IP，CNAME 填目标域名，TXT 填文本内容。",
+        current_value=draft.original_record.content if draft.original_record else None,
+    )
+    keyboard = build_dns_prompt_keyboard(can_keep=draft.mode == "update")
+    if isinstance(target, CallbackQuery):
+        await safe_edit_callback_message(target, text, keyboard)
+    else:
+        await target.answer(render_panel(text), parse_mode="HTML", reply_markup=keyboard)
+
+
+async def prompt_dns_ttl(target: Message | CallbackQuery, draft: DnsDraft) -> None:
+    text = "\n".join(
+        [
+            "☁️ DNS 流程 | 选择 TTL",
+            "",
+            f"当前选择 {format_dns_ttl(draft.ttl)}",
+        ]
+    )
+    keyboard = build_dns_ttl_keyboard(current_ttl=draft.ttl, allow_keep=draft.mode == "update")
+    if isinstance(target, CallbackQuery):
+        await safe_edit_callback_message(target, text, keyboard)
+    else:
+        await target.answer(render_panel(text), parse_mode="HTML", reply_markup=keyboard)
+
+
+async def prompt_dns_proxied(target: Message | CallbackQuery, draft: DnsDraft) -> None:
+    if draft.record_type not in {"A", "AAAA", "CNAME"}:
+        await present_dns_preview(target, draft)
+        return
+    text = "\n".join(
+        [
+            "☁️ DNS 流程 | 选择代理模式",
+            "",
+            f"当前选择 {format_dns_proxied(draft.proxied)}",
+        ]
+    )
+    keyboard = build_dns_proxied_keyboard(current_value=draft.proxied, allow_keep=draft.mode == "update")
+    if isinstance(target, CallbackQuery):
+        await safe_edit_callback_message(target, text, keyboard)
+    else:
+        await target.answer(render_panel(text), parse_mode="HTML", reply_markup=keyboard)
+
+
+async def present_dns_preview(target: Message | CallbackQuery, draft: DnsDraft) -> None:
+    service = get_dns_service()
+    zone = service.get_zone(draft.zone_key)
+    text = render_dns_draft_preview(draft, zone.zone_name)
+    keyboard = build_dns_confirm_keyboard(draft.mode)
+    if isinstance(target, CallbackQuery):
+        await safe_edit_callback_message(target, text, keyboard)
+    else:
+        await target.answer(render_panel(text), parse_mode="HTML", reply_markup=keyboard)
+
+
+def require_dns_session(user_id: int) -> DnsSession:
+    session = DNS_SESSIONS.get(user_id)
+    if session is None:
+        raise CloudflareServiceError("DNS 流程已过期，请重新进入 /dns。")
+    return session
+
+
 @router.message(Command("start"))
 async def start_handler(message: Message) -> None:
     if await reject_if_not_admin(message):
@@ -635,6 +1089,11 @@ async def menu_quota_help_handler(message: Message) -> None:
     if await reject_if_not_admin(message):
         return
     await message.answer("\n".join(render_quota_help_lines()))
+
+
+@router.message(F.text == MENU_DNS)
+async def menu_dns_handler(message: Message) -> None:
+    await dns_handler(message)
 
 
 @router.message(F.text == MENU_WEBAPP)
@@ -857,6 +1316,57 @@ async def quota_clear_handler(message: Message, command: CommandObject) -> None:
         return
     await message.answer(f"✅ 已清除流量套餐配置：{node_name}")
 
+
+@router.message(Command("dns"))
+async def dns_handler(message: Message) -> None:
+    if await reject_if_not_admin(message):
+        return
+    if message.from_user is None:
+        await message.answer("无法识别当前用户。")
+        return
+    reset_dns_session(message.from_user.id)
+    text, keyboard = await render_dns_home()
+    await message.answer(render_panel(text), parse_mode="HTML", reply_markup=keyboard)
+
+
+@router.message(Command("dns_zones"))
+async def dns_zones_handler(message: Message) -> None:
+    if await reject_if_not_admin(message):
+        return
+    try:
+        service = get_dns_service()
+        zones = service.list_configured_zones()
+    except (CloudflareServiceError, ValueError) as exc:
+        await message.answer(str(exc))
+        return
+    lines = ["☁️ DNS Zones", ""]
+    for zone in zones:
+        lines.append(f"• {zone.key} -> {zone.zone_name}")
+    await message.answer(render_panel("\n".join(lines)), parse_mode="HTML")
+
+
+@router.message(F.text)
+async def dns_text_input_handler(message: Message) -> None:
+    if not is_admin(message) or message.from_user is None:
+        return
+    session = DNS_SESSIONS.get(message.from_user.id)
+    if session is None or session.draft is None or session.draft.pending_field is None:
+        return
+    draft = session.draft
+    value = (message.text or "").strip()
+    if not value:
+        await message.answer("输入不能为空，请重新发送。")
+        return
+    if draft.pending_field == "name":
+        draft.name = value
+        draft.pending_field = None
+        await prompt_dns_content(message, draft)
+        return
+    if draft.pending_field == "content":
+        draft.content = value
+        draft.pending_field = None
+        await prompt_dns_ttl(message, draft)
+
 @router.callback_query(F.data == CALLBACK_SHOW_MENU)
 async def menu_callback_handler(callback: CallbackQuery) -> None:
     if not callback.from_user or callback.from_user.id not in settings.admin_telegram_ids:
@@ -913,6 +1423,312 @@ async def show_quota_help_callback(callback: CallbackQuery) -> None:
         "\n".join(render_quota_help_lines()),
         build_single_action_keyboard(CALLBACK_SHOW_QUOTA_HELP),
     )
+
+
+@router.callback_query(F.data == CALLBACK_DNS_HOME)
+async def dns_home_callback(callback: CallbackQuery) -> None:
+    if not callback.from_user or callback.from_user.id not in settings.admin_telegram_ids:
+        await callback.answer("无权访问。", show_alert=True)
+        return
+    reset_dns_session(callback.from_user.id)
+    text, keyboard = await render_dns_home()
+    await safe_edit_callback_message(callback, text, keyboard)
+
+
+@router.callback_query(F.data.startswith(CALLBACK_DNS_ZONE_PREFIX))
+async def dns_zone_callback(callback: CallbackQuery) -> None:
+    if not callback.from_user or callback.from_user.id not in settings.admin_telegram_ids:
+        await callback.answer("无权访问。", show_alert=True)
+        return
+    zone_key = callback.data[len(CALLBACK_DNS_ZONE_PREFIX) :]
+    session = get_dns_session(callback.from_user.id)
+    session.zone_key = zone_key
+    session.page = 1
+    session.selected_record_id = None
+    session.draft = None
+    session.pending_action = None
+    try:
+        text, keyboard = await render_dns_zone(zone_key)
+    except (CloudflareServiceError, ValueError) as exc:
+        await safe_edit_callback_message(callback, f"☁️ DNS 管理\n\n{exc}", build_single_action_keyboard(CALLBACK_DNS_HOME))
+        return
+    await safe_edit_callback_message(callback, text, keyboard)
+
+
+@router.callback_query(F.data.startswith(CALLBACK_DNS_LIST_PREFIX))
+async def dns_list_callback(callback: CallbackQuery) -> None:
+    if not callback.from_user or callback.from_user.id not in settings.admin_telegram_ids:
+        await callback.answer("无权访问。", show_alert=True)
+        return
+    try:
+        zone_key, page = parse_dns_list_callback(callback.data)
+        session = get_dns_session(callback.from_user.id)
+        session.zone_key = zone_key
+        session.page = page
+        session.draft = None
+        session.pending_action = None
+        text, keyboard = await render_dns_record_list(zone_key, page=page)
+    except (CloudflareServiceError, ValueError) as exc:
+        await safe_edit_callback_message(callback, f"☁️ DNS 管理\n\n{exc}", build_single_action_keyboard(CALLBACK_DNS_HOME))
+        return
+    await safe_edit_callback_message(callback, text, keyboard)
+
+
+@router.callback_query(F.data.startswith(CALLBACK_DNS_RECORD_PREFIX))
+async def dns_record_callback(callback: CallbackQuery) -> None:
+    if not callback.from_user or callback.from_user.id not in settings.admin_telegram_ids:
+        await callback.answer("无权访问。", show_alert=True)
+        return
+    try:
+        zone_key, record_id = parse_dns_record_callback(callback.data)
+        session = get_dns_session(callback.from_user.id)
+        session.zone_key = zone_key
+        session.selected_record_id = record_id
+        session.draft = None
+        session.pending_action = None
+        text, keyboard = await render_dns_record_detail(zone_key, record_id)
+    except (CloudflareServiceError, ValueError) as exc:
+        await safe_edit_callback_message(callback, f"☁️ DNS 管理\n\n{exc}", build_single_action_keyboard(CALLBACK_DNS_HOME))
+        return
+    await safe_edit_callback_message(callback, text, keyboard)
+
+
+@router.callback_query(F.data.startswith(CALLBACK_DNS_CREATE_PREFIX))
+async def dns_create_callback(callback: CallbackQuery) -> None:
+    if not callback.from_user or callback.from_user.id not in settings.admin_telegram_ids:
+        await callback.answer("无权访问。", show_alert=True)
+        return
+    zone_key = callback.data[len(CALLBACK_DNS_CREATE_PREFIX) :]
+    session = get_dns_session(callback.from_user.id)
+    session.zone_key = zone_key
+    session.draft = None
+    session.pending_action = None
+    try:
+        service = get_dns_service()
+        zone = service.get_zone(zone_key)
+    except (CloudflareServiceError, ValueError) as exc:
+        await safe_edit_callback_message(callback, f"☁️ DNS 管理\n\n{exc}", build_single_action_keyboard(CALLBACK_DNS_HOME))
+        return
+    text = "\n".join([f"☁️ DNS 新增 | {zone.zone_name}", "", "先选择记录类型。"])
+    await safe_edit_callback_message(callback, text, build_dns_type_keyboard(zone_key))
+
+
+@router.callback_query(F.data.startswith(CALLBACK_DNS_TYPE_PREFIX))
+async def dns_type_callback(callback: CallbackQuery) -> None:
+    if not callback.from_user or callback.from_user.id not in settings.admin_telegram_ids:
+        await callback.answer("无权访问。", show_alert=True)
+        return
+    _, _, zone_key, record_type = callback.data.split(":", 3)
+    session = get_dns_session(callback.from_user.id)
+    session.zone_key = zone_key
+    session.draft = DnsDraft(
+        mode="create",
+        zone_key=zone_key,
+        record_type=record_type,
+        proxied=True if record_type in {"A", "AAAA", "CNAME"} else None,
+    )
+    session.pending_action = None
+    await prompt_dns_name(callback, session.draft)
+
+
+@router.callback_query(F.data.startswith(CALLBACK_DNS_UPDATE_PREFIX))
+async def dns_update_callback(callback: CallbackQuery) -> None:
+    if not callback.from_user or callback.from_user.id not in settings.admin_telegram_ids:
+        await callback.answer("无权访问。", show_alert=True)
+        return
+    try:
+        zone_key, record_id = parse_dns_record_callback(callback.data.replace(CALLBACK_DNS_UPDATE_PREFIX, CALLBACK_DNS_RECORD_PREFIX, 1))
+        service = get_dns_service()
+        record = await service.get_dns_record(zone_key, record_id)
+        session = get_dns_session(callback.from_user.id)
+        session.zone_key = zone_key
+        session.selected_record_id = record_id
+        session.draft = DnsDraft(
+            mode="update",
+            zone_key=zone_key,
+            record_id=record_id,
+            record_type=record.type,
+            name=record.name,
+            content=record.content,
+            ttl=record.ttl,
+            proxied=record.proxied,
+            original_record=record,
+        )
+        session.pending_action = None
+    except (CloudflareServiceError, ValueError) as exc:
+        await safe_edit_callback_message(callback, f"☁️ DNS 管理\n\n{exc}", build_single_action_keyboard(CALLBACK_DNS_HOME))
+        return
+    await prompt_dns_name(callback, session.draft)
+
+
+@router.callback_query(F.data.startswith(CALLBACK_DNS_DELETE_PREFIX))
+async def dns_delete_callback(callback: CallbackQuery) -> None:
+    if not callback.from_user or callback.from_user.id not in settings.admin_telegram_ids:
+        await callback.answer("无权访问。", show_alert=True)
+        return
+    try:
+        zone_key, record_id = parse_dns_record_callback(callback.data.replace(CALLBACK_DNS_DELETE_PREFIX, CALLBACK_DNS_RECORD_PREFIX, 1))
+        service = get_dns_service()
+        zone = service.get_zone(zone_key)
+        record = await service.get_dns_record(zone_key, record_id)
+        session = get_dns_session(callback.from_user.id)
+        session.zone_key = zone_key
+        session.selected_record_id = record_id
+        session.draft = None
+        session.pending_action = DnsPendingAction(action="delete", zone_key=zone_key, record_id=record_id)
+        await safe_edit_callback_message(callback, render_dns_delete_preview(record, zone.zone_name), build_dns_confirm_keyboard("delete"))
+    except (CloudflareServiceError, ValueError) as exc:
+        await safe_edit_callback_message(callback, f"☁️ DNS 管理\n\n{exc}", build_single_action_keyboard(CALLBACK_DNS_HOME))
+
+
+@router.callback_query(F.data.startswith(CALLBACK_DNS_KEEP_PREFIX))
+async def dns_keep_value_callback(callback: CallbackQuery) -> None:
+    if not callback.from_user or callback.from_user.id not in settings.admin_telegram_ids:
+        await callback.answer("无权访问。", show_alert=True)
+        return
+    try:
+        session = require_dns_session(callback.from_user.id)
+        draft = session.draft
+        if draft is None or draft.original_record is None:
+            raise CloudflareServiceError("当前没有可保留的 DNS 草稿。")
+        field_name = callback.data[len(CALLBACK_DNS_KEEP_PREFIX) :]
+        if field_name == "current":
+            if draft.pending_field == "name":
+                draft.name = draft.original_record.name
+                draft.pending_field = None
+                await prompt_dns_content(callback, draft)
+                return
+            if draft.pending_field == "content":
+                draft.content = draft.original_record.content
+                draft.pending_field = None
+                await prompt_dns_ttl(callback, draft)
+                return
+        if field_name == "ttl":
+            draft.ttl = draft.original_record.ttl
+            await prompt_dns_proxied(callback, draft)
+            return
+        if field_name == "proxied":
+            draft.proxied = draft.original_record.proxied
+            await present_dns_preview(callback, draft)
+            return
+        raise CloudflareServiceError("无法保留当前字段。")
+    except (CloudflareServiceError, ValueError) as exc:
+        await safe_edit_callback_message(callback, f"☁️ DNS 管理\n\n{exc}", build_single_action_keyboard(CALLBACK_DNS_HOME))
+
+
+@router.callback_query(F.data.startswith(CALLBACK_DNS_TTL_PREFIX))
+async def dns_ttl_callback(callback: CallbackQuery) -> None:
+    if not callback.from_user or callback.from_user.id not in settings.admin_telegram_ids:
+        await callback.answer("无权访问。", show_alert=True)
+        return
+    try:
+        session = require_dns_session(callback.from_user.id)
+        if session.draft is None:
+            raise CloudflareServiceError("当前没有可编辑的 DNS 草稿。")
+        ttl = int(callback.data[len(CALLBACK_DNS_TTL_PREFIX) :])
+        session.draft.ttl = ttl
+        await prompt_dns_proxied(callback, session.draft)
+    except (CloudflareServiceError, ValueError) as exc:
+        await safe_edit_callback_message(callback, f"☁️ DNS 管理\n\n{exc}", build_single_action_keyboard(CALLBACK_DNS_HOME))
+
+
+@router.callback_query(F.data.startswith(CALLBACK_DNS_PROXIED_PREFIX))
+async def dns_proxied_callback(callback: CallbackQuery) -> None:
+    if not callback.from_user or callback.from_user.id not in settings.admin_telegram_ids:
+        await callback.answer("无权访问。", show_alert=True)
+        return
+    try:
+        session = require_dns_session(callback.from_user.id)
+        if session.draft is None:
+            raise CloudflareServiceError("当前没有可编辑的 DNS 草稿。")
+        value = callback.data[len(CALLBACK_DNS_PROXIED_PREFIX) :]
+        session.draft.proxied = value == "1"
+        await present_dns_preview(callback, session.draft)
+    except (CloudflareServiceError, ValueError) as exc:
+        await safe_edit_callback_message(callback, f"☁️ DNS 管理\n\n{exc}", build_single_action_keyboard(CALLBACK_DNS_HOME))
+
+
+@router.callback_query(F.data.startswith(CALLBACK_DNS_CONFIRM_PREFIX))
+async def dns_confirm_callback(callback: CallbackQuery) -> None:
+    if not callback.from_user or callback.from_user.id not in settings.admin_telegram_ids:
+        await callback.answer("无权访问。", show_alert=True)
+        return
+    action = callback.data[len(CALLBACK_DNS_CONFIRM_PREFIX) :]
+    try:
+        session = require_dns_session(callback.from_user.id)
+        service = get_dns_service()
+        if action == "delete":
+            if session.pending_action is None or session.pending_action.action != "delete" or session.pending_action.record_id is None:
+                raise CloudflareServiceError("当前没有待确认的删除操作。")
+            await service.delete_dns_record(session.pending_action.zone_key, session.pending_action.record_id)
+            text, keyboard = await render_dns_record_list(session.pending_action.zone_key, page=session.page or 1)
+            if callback.message is not None:
+                await callback.message.answer("✅ DNS 记录已删除。")
+            session.pending_action = None
+            session.selected_record_id = None
+            session.draft = None
+            await safe_edit_callback_message(callback, text, keyboard)
+            return
+        if session.draft is None:
+            raise CloudflareServiceError("当前没有待确认的 DNS 草稿。")
+        draft = session.draft
+        if action == "create":
+            created = await service.create_dns_record(
+                draft.zone_key,
+                record_type=draft.record_type,
+                name=draft.name,
+                content=draft.content,
+                ttl=draft.ttl,
+                proxied=draft.proxied,
+            )
+            session.selected_record_id = created.id
+            session.draft = None
+            if callback.message is not None:
+                await callback.message.answer("✅ DNS 记录已新增。")
+            text, keyboard = await render_dns_record_detail(draft.zone_key, created.id)
+            await safe_edit_callback_message(callback, text, keyboard)
+            return
+        if action == "update":
+            updated = await service.update_dns_record(
+                draft.zone_key,
+                record_id=draft.record_id or "",
+                record_type=draft.record_type,
+                name=draft.name,
+                content=draft.content,
+                ttl=draft.ttl,
+                proxied=draft.proxied,
+            )
+            session.selected_record_id = updated.id
+            session.draft = None
+            if callback.message is not None:
+                await callback.message.answer("✅ DNS 记录已更新。")
+            text, keyboard = await render_dns_record_detail(draft.zone_key, updated.id)
+            await safe_edit_callback_message(callback, text, keyboard)
+            return
+        raise CloudflareServiceError("未知的确认操作。")
+    except (CloudflareServiceError, ValueError) as exc:
+        await safe_edit_callback_message(callback, f"☁️ DNS 管理\n\n{exc}", build_single_action_keyboard(CALLBACK_DNS_HOME))
+
+
+@router.callback_query(F.data == CALLBACK_DNS_CANCEL)
+async def dns_cancel_callback(callback: CallbackQuery) -> None:
+    if not callback.from_user or callback.from_user.id not in settings.admin_telegram_ids:
+        await callback.answer("无权访问。", show_alert=True)
+        return
+    try:
+        session = require_dns_session(callback.from_user.id)
+        if session.selected_record_id and session.zone_key:
+            text, keyboard = await render_dns_record_detail(session.zone_key, session.selected_record_id)
+        elif session.zone_key:
+            text, keyboard = await render_dns_zone(session.zone_key)
+        else:
+            text, keyboard = await render_dns_home()
+        session.draft = None
+        session.pending_action = None
+    except (CloudflareServiceError, ValueError) as exc:
+        text = f"☁️ DNS 管理\n\n{exc}"
+        keyboard = build_single_action_keyboard(CALLBACK_DNS_HOME)
+    await safe_edit_callback_message(callback, text, keyboard)
 
 
 @router.callback_query(F.data.startswith(CALLBACK_NODE_PREFIX))
@@ -1022,6 +1838,8 @@ async def run_polling() -> None:
             BotCommand(command="alerts", description="查看活动告警"),
             BotCommand(command="traffic", description="查看近24小时流量"),
             BotCommand(command="daily", description="查看前一日流量日报"),
+            BotCommand(command="dns", description="打开 Cloudflare DNS 管理"),
+            BotCommand(command="dns_zones", description="列出可管理 DNS Zone"),
             BotCommand(command="quota", description="查看节点流量套餐"),
             BotCommand(command="quota_monthly", description="设置按月流量套餐"),
             BotCommand(command="quota_interval", description="设置按天循环套餐"),

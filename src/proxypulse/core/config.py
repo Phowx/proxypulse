@@ -1,13 +1,22 @@
 from __future__ import annotations
 
+import json
 import os
 import socket
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+@dataclass(frozen=True, slots=True)
+class CloudflareZoneConfig:
+    key: str
+    zone_id: str
+    zone_name: str
 
 
 class Settings(BaseSettings):
@@ -25,6 +34,8 @@ class Settings(BaseSettings):
     bot_token: str = ""
     webapp_url: str = ""
     external_notify_secret: str = ""
+    cloudflare_api_token: str = ""
+    cloudflare_zones_raw: str = Field(default="", alias="cloudflare_zones")
     admin_telegram_ids_raw: str = Field(default="", alias="admin_telegram_ids")
     poll_interval_seconds: int = 15
     agent_name: str = Field(default_factory=socket.gethostname)
@@ -52,6 +63,30 @@ class Settings(BaseSettings):
             if value:
                 values.add(int(value))
         return values
+
+    @property
+    def cloudflare_zones(self) -> dict[str, CloudflareZoneConfig]:
+        raw_value = os.getenv("PROXYPULSE_CLOUDFLARE_ZONES", self.cloudflare_zones_raw).strip()
+        if not raw_value:
+            return {}
+        try:
+            parsed = json.loads(raw_value)
+        except json.JSONDecodeError as exc:
+            raise ValueError("PROXYPULSE_CLOUDFLARE_ZONES must be valid JSON.") from exc
+        if not isinstance(parsed, dict):
+            raise ValueError("PROXYPULSE_CLOUDFLARE_ZONES must be a JSON object.")
+        zones: dict[str, CloudflareZoneConfig] = {}
+        for key, value in parsed.items():
+            if not isinstance(key, str) or not key.strip():
+                raise ValueError("PROXYPULSE_CLOUDFLARE_ZONES keys must be non-empty strings.")
+            if not isinstance(value, dict):
+                raise ValueError(f"Cloudflare zone '{key}' must be a JSON object.")
+            zone_id = str(value.get("zone_id", "")).strip()
+            zone_name = str(value.get("zone_name", "")).strip()
+            if not zone_id or not zone_name:
+                raise ValueError(f"Cloudflare zone '{key}' must include zone_id and zone_name.")
+            zones[key] = CloudflareZoneConfig(key=key, zone_id=zone_id, zone_name=zone_name)
+        return zones
 
 
 @lru_cache
