@@ -65,6 +65,11 @@ from proxypulse.services.reports import (
     summarize_previous_local_day,
     summarize_recent_24h,
 )
+from proxypulse.services.traffic_diagnostics import (
+    TrafficDiagnosisError,
+    build_traffic_diagnosis,
+    format_traffic_diagnosis,
+)
 
 settings = get_settings()
 router = Router()
@@ -903,6 +908,12 @@ async def render_quota_response(node_name: str) -> str:
     return "\n".join([f"🧾 套餐状态 | {node_name}", "", *render_metric_block("套餐", format_quota_compact_lines(status))])
 
 
+async def render_traffic_diag_response(node_name: str) -> str:
+    async with SessionLocal() as session:
+        diagnosis = await build_traffic_diagnosis(session, node_name)
+    return format_traffic_diagnosis(diagnosis)
+
+
 async def render_dns_home() -> tuple[str, InlineKeyboardMarkup | None]:
     try:
         service = get_dns_service()
@@ -1122,6 +1133,22 @@ async def traffic_handler(message: Message) -> None:
         return
     text, keyboard = await render_traffic_response()
     await message.answer(render_panel(text), parse_mode="HTML", reply_markup=keyboard)
+
+
+@router.message(Command("traffic_diag"))
+async def traffic_diag_handler(message: Message, command: CommandObject) -> None:
+    if await reject_if_not_admin(message):
+        return
+    node_name = (command.args or "").strip()
+    if not node_name:
+        await message.answer("用法：/traffic_diag <节点名>")
+        return
+    try:
+        text = await render_traffic_diag_response(node_name)
+    except TrafficDiagnosisError as exc:
+        await message.answer(str(exc))
+        return
+    await message.answer(render_panel(text), parse_mode="HTML")
 
 
 @router.message(Command("daily"))
@@ -1748,6 +1775,7 @@ async def run_polling() -> None:
             BotCommand(command="node", description="查看节点详情"),
             BotCommand(command="delete_node", description="删除节点并清理数据"),
             BotCommand(command="traffic", description="查看近24小时流量"),
+            BotCommand(command="traffic_diag", description="诊断节点流量统计口径"),
             BotCommand(command="daily", description="查看前一日流量日报"),
             BotCommand(command="quota", description="查看节点流量套餐"),
             BotCommand(command="dns", description="打开 Cloudflare DNS 管理"),
