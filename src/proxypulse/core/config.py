@@ -32,7 +32,6 @@ class Settings(BaseSettings):
     api_port: int = 8080
     server_url: str = "http://localhost:8080"
     bot_token: str = ""
-    webapp_url: str = ""
     external_notify_secret: str = ""
     cloudflare_api_token: str = ""
     cloudflare_zones_raw: str = Field(default="", alias="cloudflare_zones")

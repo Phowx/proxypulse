@@ -33,7 +33,6 @@ def _format_observed_at(value: datetime | None) -> str:
 def format_external_network_identity_message(payload: ExternalNetworkIdentityRequest) -> str:
     lines = [
         "📡 <b>外部网络通知</b>",
-        f"来源：<code>{escape(payload.source)}</code>",
         f"时间：{escape(_format_observed_at(payload.observed_at))}",
     ]
     if payload.location:

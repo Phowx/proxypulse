@@ -26,7 +26,7 @@ class ExternalNotificationFormattingTests(TestCase):
         message = format_external_network_identity_message(payload)
 
         self.assertIn("📡 <b>外部网络通知</b>", message)
-        self.assertIn("来源：<code>edge&lt;1&gt;</code>", message)
+        self.assertNotIn("来源：", message)
         self.assertIn("位置：HK &amp; SG", message)
         self.assertIn("域名：<code>a.example.com, b.example.com</code>", message)
         self.assertIn("备注：name=&quot;prod&quot;", message)

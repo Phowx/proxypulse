@@ -19,7 +19,6 @@ from aiogram.types import (
     KeyboardButton,
     Message,
     ReplyKeyboardMarkup,
-    WebAppInfo,
 )
 
 from proxypulse.core.config import get_settings
@@ -78,7 +77,6 @@ logger = logging.getLogger(__name__)
 MENU_NODES = "节点概览"
 MENU_TRAFFIC = "24h 流量"
 MENU_DAILY = "流量日报"
-MENU_WEBAPP = "Web 面板"
 MENU_DNS = "DNS 管理"
 CALLBACK_SHOW_NODES = "show:nodes"
 CALLBACK_SHOW_TRAFFIC = "show:traffic"
@@ -441,19 +439,15 @@ def render_dns_delete_preview(record: CloudflareDNSRecord, zone_name: str) -> st
     )
 
 
-def dashboard_button_rows(include_webapp: bool) -> list[list[str]]:
-    rows = [
+def dashboard_button_rows() -> list[list[str]]:
+    return [
         [MENU_NODES, MENU_DAILY, MENU_DNS],
     ]
-    if include_webapp:
-        rows.append([MENU_WEBAPP])
-    return rows
 
 
 def build_dashboard_keyboard() -> ReplyKeyboardMarkup:
-    webapp_url = resolve_webapp_url()
     rows = []
-    for row in dashboard_button_rows(is_supported_webapp_url(webapp_url)):
+    for row in dashboard_button_rows():
         buttons = []
         for label in row:
             buttons.append(KeyboardButton(text=label))
@@ -464,27 +458,6 @@ def build_dashboard_keyboard() -> ReplyKeyboardMarkup:
         is_persistent=True,
         input_field_placeholder="选择入口或输入命令",
     )
-
-
-def build_webapp_entry_keyboard() -> InlineKeyboardMarkup | None:
-    webapp_url = resolve_webapp_url()
-    if not is_supported_webapp_url(webapp_url):
-        return None
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="打开 Web 面板", web_app=WebAppInfo(url=webapp_url))],
-        ]
-    )
-
-
-def resolve_webapp_url() -> str:
-    if settings.webapp_url:
-        return settings.webapp_url.rstrip("/")
-    return f"{settings.server_url.rstrip('/')}/app"
-
-
-def is_supported_webapp_url(url: str) -> bool:
-    return url.lower().startswith("https://")
 
 
 def build_dashboard_menu_text() -> str:
@@ -1048,17 +1021,6 @@ async def menu_daily_handler(message: Message) -> None:
 @router.message(F.text == MENU_DNS)
 async def menu_dns_handler(message: Message) -> None:
     await dns_handler(message)
-
-
-@router.message(F.text == MENU_WEBAPP)
-async def menu_webapp_handler(message: Message) -> None:
-    if await reject_if_not_admin(message):
-        return
-    keyboard = build_webapp_entry_keyboard()
-    if keyboard is None:
-        await message.answer("Web 面板需要可访问的 HTTPS 地址。")
-        return
-    await message.answer("点击下方按钮打开 Web 面板。", reply_markup=keyboard)
 
 
 @router.message(Command("enroll"))
