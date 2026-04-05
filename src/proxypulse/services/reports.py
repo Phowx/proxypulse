@@ -174,6 +174,9 @@ def mark_daily_report_run(session: AsyncSession, report_day: date) -> None:
     session.add(ReportRun(report_key=report_key))
 
 
-def should_send_daily_report(now_local: datetime) -> bool:
-    scheduled_time = time(settings.daily_report_hour, settings.daily_report_minute)
+def should_send_daily_report(now_local: datetime, *, hour: int | None = None, minute: int | None = None) -> bool:
+    scheduled_time = time(
+        settings.daily_report_hour if hour is None else hour,
+        settings.daily_report_minute if minute is None else minute,
+    )
     return now_local.timetz().replace(tzinfo=None) >= scheduled_time

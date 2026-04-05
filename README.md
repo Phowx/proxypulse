@@ -75,6 +75,7 @@ python -m proxypulse.agent
 - `/delete_node my-node`
 - `/traffic`
 - `/daily`
+- `/daily_time`
 - `/quota my-node`
 - `/dns`
 
@@ -88,6 +89,7 @@ python -m proxypulse.agent
 - `/delete_node <node_name>`：删除节点，并在确认后清理其历史指标、告警和流量套餐配置。
 - `/traffic`：查看最近 24 小时流量汇总。
 - `/daily`：查看上一自然日流量日报。
+- `/daily_time [HH:MM]`：查看或设置自动推送日报的时间。
 - `/quota <node_name>`：查看节点当前流量套餐状态。
 - `/dns`：打开 Cloudflare DNS 管理入口。
 - `/dns_zones`：列出当前可管理的 Cloudflare Zone。
@@ -120,6 +122,7 @@ python -m proxypulse.agent
 - `/traffic` 会根据累计 `RX/TX` 快照计算滚动最近 24 小时流量。
 - `/daily` 会根据配置时区展示上一自然日的日报。
 - 默认使用 `Asia/Shanghai`，并在每天 `09:00` 自动推送前一日的日报。
+- 可以通过 `/daily_time HH:MM` 调整自动推送时间；`PROXYPULSE_DAILY_REPORT_HOUR` 和 `PROXYPULSE_DAILY_REPORT_MINUTE` 只作为默认值。
 - 报表按节点分组展示，不做节点排行。
 
 ## 流量套餐

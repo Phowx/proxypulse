@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest import TestCase
 
-from proxypulse.bot.main import build_dashboard_menu_text, dashboard_button_rows, render_node_card
+from proxypulse.bot.main import build_dashboard_menu_text, build_node_detail_keyboard, build_node_list_keyboard, dashboard_button_rows, render_node_card
 from proxypulse.services.dashboard import NodeCardSummary, NodeRateSummary, NodeTrafficWindowSummary
 
 
@@ -18,8 +18,23 @@ class BotFormattingTests(TestCase):
     def test_dashboard_button_rows_use_single_row(self) -> None:
         rows = dashboard_button_rows()
 
-        self.assertEqual(rows[0], ["节点概览", "流量日报", "DNS 管理"])
+        self.assertEqual(rows[0], ["节点概览", "DNS 管理"])
         self.assertEqual(len(rows), 1)
+
+    def test_node_list_keyboard_uses_three_column_grid_and_footer(self) -> None:
+        keyboard = build_node_list_keyboard(["la163", "lagia", "tokyo", "hk01"])
+
+        self.assertIsNotNone(keyboard)
+        self.assertEqual([button.text for button in keyboard.inline_keyboard[0]], ["la163", "lagia", "tokyo"])
+        self.assertEqual([button.text for button in keyboard.inline_keyboard[1]], ["hk01"])
+        self.assertEqual([button.text for button in keyboard.inline_keyboard[2]], ["刷新列表"])
+        self.assertEqual([button.text for button in keyboard.inline_keyboard[3]], ["返回菜单"])
+
+    def test_node_detail_keyboard_removes_daily_report(self) -> None:
+        keyboard = build_node_detail_keyboard("lagia")
+
+        self.assertEqual([button.text for button in keyboard.inline_keyboard[0]], ["刷新详情", "返回节点列表", "返回菜单"])
+        self.assertEqual([button.text for button in keyboard.inline_keyboard[1]], ["🗑️ 删除节点"])
 
     def test_render_node_card_handles_missing_values(self) -> None:
         node = SimpleNamespace(

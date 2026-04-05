@@ -16,9 +16,7 @@ from aiogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    KeyboardButton,
     Message,
-    ReplyKeyboardMarkup,
 )
 
 from proxypulse.core.config import get_settings
@@ -54,6 +52,12 @@ from proxypulse.services.quota import (
     get_quota_status,
     parse_limit_gib,
     parse_used_gib,
+)
+from proxypulse.services.report_schedule import (
+    ReportScheduleError,
+    get_daily_report_schedule,
+    parse_daily_report_clock,
+    set_daily_report_schedule,
 )
 from proxypulse.services.reports import (
     format_bytes,
@@ -441,33 +445,38 @@ def render_dns_delete_preview(record: CloudflareDNSRecord, zone_name: str) -> st
 
 def dashboard_button_rows() -> list[list[str]]:
     return [
-        [MENU_NODES, MENU_DAILY, MENU_DNS],
+        [MENU_NODES, MENU_DNS],
     ]
 
 
-def build_dashboard_keyboard() -> ReplyKeyboardMarkup:
+def build_dashboard_keyboard() -> InlineKeyboardMarkup:
     rows = []
     for row in dashboard_button_rows():
-        buttons = []
-        for label in row:
-            buttons.append(KeyboardButton(text=label))
-        rows.append(buttons)
-    return ReplyKeyboardMarkup(
-        keyboard=rows,
-        resize_keyboard=True,
-        is_persistent=True,
-        input_field_placeholder="选择入口或输入命令",
-    )
+        rows.append([InlineKeyboardButton(text=label, callback_data=_dashboard_button_callback(label)) for label in row])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _dashboard_button_callback(label: str) -> str:
+    if label == MENU_NODES:
+        return CALLBACK_SHOW_NODES
+    if label == MENU_DNS:
+        return CALLBACK_DNS_HOME
+    raise ValueError(f"Unsupported dashboard label: {label}")
 
 
 def build_dashboard_menu_text() -> str:
     return "ProxyPulse 控制台已就绪。"
 
 
+def _chunk_buttons(buttons: list[InlineKeyboardButton], size: int = 3) -> list[list[InlineKeyboardButton]]:
+    return [buttons[index : index + size] for index in range(0, len(buttons), size)]
+
+
 def build_node_list_keyboard(node_names: list[str]) -> InlineKeyboardMarkup | None:
-    if not node_names:
-        return None
-    rows = [[InlineKeyboardButton(text=node_name, callback_data=f"{CALLBACK_NODE_PREFIX}{node_name}")] for node_name in node_names]
+    rows: list[list[InlineKeyboardButton]] = []
+    if node_names:
+        node_buttons = [InlineKeyboardButton(text=node_name, callback_data=f"{CALLBACK_NODE_PREFIX}{node_name}") for node_name in node_names]
+        rows.extend(_chunk_buttons(node_buttons, size=3))
     rows.append([InlineKeyboardButton(text="刷新列表", callback_data=CALLBACK_SHOW_NODES)])
     rows.append([InlineKeyboardButton(text="返回菜单", callback_data=CALLBACK_SHOW_MENU)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -476,10 +485,14 @@ def build_node_list_keyboard(node_names: list[str]) -> InlineKeyboardMarkup | No
 def build_node_detail_keyboard(node_name: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="刷新详情", callback_data=f"{CALLBACK_NODE_PREFIX}{node_name}")],
-            [InlineKeyboardButton(text="🗑️ 删除节点", callback_data=f"{CALLBACK_NODE_DELETE_PREFIX}{node_name}")],
-            [InlineKeyboardButton(text="返回节点列表", callback_data=CALLBACK_SHOW_NODES)],
-            [InlineKeyboardButton(text="返回菜单", callback_data=CALLBACK_SHOW_MENU)],
+            [
+                InlineKeyboardButton(text="刷新详情", callback_data=f"{CALLBACK_NODE_PREFIX}{node_name}"),
+                InlineKeyboardButton(text="返回节点列表", callback_data=CALLBACK_SHOW_NODES),
+                InlineKeyboardButton(text="返回菜单", callback_data=CALLBACK_SHOW_MENU),
+            ],
+            [
+                InlineKeyboardButton(text="🗑️ 删除节点", callback_data=f"{CALLBACK_NODE_DELETE_PREFIX}{node_name}"),
+            ],
         ]
     )
 
@@ -723,7 +736,7 @@ def _parse_local_datetime(value: str) -> datetime:
 
 
 async def send_dashboard(message: Message) -> None:
-    await message.answer(build_dashboard_menu_text(), reply_markup=build_dashboard_keyboard())
+    await message.answer(render_panel(build_dashboard_menu_text()), parse_mode="HTML", reply_markup=build_dashboard_keyboard())
 
 
 async def safe_edit_callback_message(callback: CallbackQuery, text: str, reply_markup: InlineKeyboardMarkup | None) -> None:
@@ -736,18 +749,6 @@ async def safe_edit_callback_message(callback: CallbackQuery, text: str, reply_m
         if "message is not modified" not in str(exc).lower():
             raise
     await callback.answer()
-
-
-async def safe_clear_callback_markup(callback: CallbackQuery) -> None:
-    if callback.message is None:
-        await callback.answer()
-        return
-    try:
-        await callback.message.edit_reply_markup(reply_markup=None)
-    except TelegramBadRequest as exc:
-        if "message is not modified" not in str(exc).lower():
-            raise
-    await callback.answer("已返回底部菜单。")
 
 
 async def render_nodes_response() -> tuple[str, InlineKeyboardMarkup | None]:
@@ -881,6 +882,22 @@ async def render_quota_response(node_name: str) -> str:
     return "\n".join([f"🧾 套餐状态 | {node_name}", "", *render_metric_block("套餐", format_quota_compact_lines(status))])
 
 
+async def render_daily_schedule_response() -> str:
+    async with SessionLocal() as session:
+        schedule = await get_daily_report_schedule(session)
+    return "\n".join(
+        [
+            "🕘 流量日报推送时间",
+            "",
+            f"时区  {schedule.timezone}",
+            f"时间  每天 {schedule.clock_text}",
+            "",
+            "用法：/daily_time HH:MM",
+            "示例：/daily_time 08:30",
+        ]
+    )
+
+
 async def render_traffic_diag_response(node_name: str) -> str:
     async with SessionLocal() as session:
         diagnosis = await build_traffic_diagnosis(session, node_name)
@@ -1008,21 +1025,6 @@ async def menu_handler(message: Message) -> None:
     await start_handler(message)
 
 
-@router.message(F.text == MENU_NODES)
-async def menu_nodes_handler(message: Message) -> None:
-    await nodes_handler(message)
-
-
-@router.message(F.text == MENU_DAILY)
-async def menu_daily_handler(message: Message) -> None:
-    await daily_handler(message)
-
-
-@router.message(F.text == MENU_DNS)
-async def menu_dns_handler(message: Message) -> None:
-    await dns_handler(message)
-
-
 @router.message(Command("enroll"))
 async def enroll_handler(message: Message, command: CommandObject) -> None:
     if await reject_if_not_admin(message):
@@ -1119,6 +1121,38 @@ async def daily_handler(message: Message) -> None:
         return
     text, keyboard = await render_daily_response()
     await message.answer(render_panel(text), parse_mode="HTML", reply_markup=keyboard)
+
+
+@router.message(Command("daily_time"))
+async def daily_time_handler(message: Message, command: CommandObject) -> None:
+    if await reject_if_not_admin(message):
+        return
+    clock_text = (command.args or "").strip()
+    if not clock_text:
+        await message.answer(render_panel(await render_daily_schedule_response()), parse_mode="HTML")
+        return
+
+    try:
+        hour, minute = parse_daily_report_clock(clock_text)
+        async with SessionLocal() as session:
+            schedule = await set_daily_report_schedule(session, hour=hour, minute=minute)
+    except ReportScheduleError as exc:
+        await message.answer(str(exc))
+        return
+
+    await message.answer(
+        render_panel(
+            "\n".join(
+                [
+                    "✅ 已更新流量日报推送时间",
+                    "",
+                    f"时区  {schedule.timezone}",
+                    f"时间  每天 {schedule.clock_text}",
+                ]
+            )
+        ),
+        parse_mode="HTML",
+    )
 
 
 @router.message(Command("quota"))
@@ -1296,7 +1330,7 @@ async def menu_callback_handler(callback: CallbackQuery) -> None:
     if not callback.from_user or callback.from_user.id not in settings.admin_telegram_ids:
         await callback.answer("无权访问。", show_alert=True)
         return
-    await safe_clear_callback_markup(callback)
+    await safe_edit_callback_message(callback, build_dashboard_menu_text(), build_dashboard_keyboard())
 
 
 @router.callback_query(F.data == CALLBACK_SHOW_NODES)
@@ -1682,10 +1716,11 @@ async def cancel_node_delete_callback(callback: CallbackQuery) -> None:
 
 async def maybe_send_daily_report(bot: Bot) -> None:
     local_now = datetime.now(ZoneInfo(settings.report_timezone))
-    if not should_send_daily_report(local_now):
-        return
 
     async with SessionLocal() as session:
+        schedule = await get_daily_report_schedule(session)
+        if not should_send_daily_report(local_now, hour=schedule.hour, minute=schedule.minute):
+            return
         report_day, summary = await summarize_previous_local_day(session, today_local=local_now.date())
         if await has_daily_report_run(session, report_day):
             return
@@ -1739,6 +1774,7 @@ async def run_polling() -> None:
             BotCommand(command="traffic", description="查看近24小时流量"),
             BotCommand(command="traffic_diag", description="诊断节点流量统计口径"),
             BotCommand(command="daily", description="查看前一日流量日报"),
+            BotCommand(command="daily_time", description="查看或设置日报推送时间"),
             BotCommand(command="quota", description="查看节点流量套餐"),
             BotCommand(command="dns", description="打开 Cloudflare DNS 管理"),
             BotCommand(command="dns_zones", description="列出可管理 DNS Zone"),
