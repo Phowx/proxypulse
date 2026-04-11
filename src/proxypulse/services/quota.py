@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from proxypulse.core.config import get_settings
 from proxypulse.core.models import MetricSnapshot, Node, TrafficQuotaCycle
+from proxypulse.services.reports import counter_delta
 from proxypulse.services.reports import format_bytes
 
 settings = get_settings()
@@ -108,6 +109,36 @@ async def _find_first_snapshot_in_window(session: AsyncSession, node_id: str, st
     return result.scalar_one_or_none()
 
 
+async def _sum_total_usage_in_window(
+    session: AsyncSession,
+    node_id: str,
+    start_at: datetime,
+    end_at: datetime,
+    *,
+    baseline_total: int | None = None,
+) -> int:
+    result = await session.execute(
+        select(MetricSnapshot.rx_bytes, MetricSnapshot.tx_bytes)
+        .where(
+            MetricSnapshot.node_id == node_id,
+            MetricSnapshot.created_at >= _db_datetime(start_at),
+            MetricSnapshot.created_at < _db_datetime(end_at),
+        )
+        .order_by(MetricSnapshot.created_at.asc())
+    )
+
+    total_usage = 0
+    previous_total = baseline_total
+    for rx_bytes, tx_bytes in result.all():
+        current_total = rx_bytes + tx_bytes
+        if previous_total is None:
+            previous_total = current_total
+            continue
+        total_usage += counter_delta(current_total, previous_total)
+        previous_total = current_total
+    return total_usage
+
+
 def _current_total_bytes(node: Node) -> int:
     return int((node.latest_rx_bytes or 0) + (node.latest_tx_bytes or 0))
 
@@ -127,22 +158,29 @@ async def get_quota_status(session: AsyncSession, node: Node, now: datetime | No
         )
 
     period_start, next_reset_at, cycle_description = _compute_period_bounds(node, now=now)
-    current_total = _current_total_bytes(node)
-    baseline_total = current_total
     base_usage = 0
+    delta_baseline_total: int | None = None
+    delta_start_at = period_start
 
     if node.traffic_quota_calibrated_at is not None:
         calibrated_at = _ensure_aware(node.traffic_quota_calibrated_at)
         if calibrated_at >= period_start:
-            baseline_total = node.traffic_quota_calibrated_total_bytes or current_total
             base_usage = node.traffic_quota_calibrated_usage_bytes or 0
+            delta_baseline_total = node.traffic_quota_calibrated_total_bytes
+            delta_start_at = calibrated_at
 
     if base_usage == 0:
         first_snapshot = await _find_first_snapshot_in_window(session, node.id, period_start, next_reset_at)
         if first_snapshot is not None:
-            baseline_total = first_snapshot.rx_bytes + first_snapshot.tx_bytes
+            delta_baseline_total = first_snapshot.rx_bytes + first_snapshot.tx_bytes
 
-    used_bytes = base_usage + max(current_total - baseline_total, 0)
+    used_bytes = base_usage + await _sum_total_usage_in_window(
+        session,
+        node.id,
+        delta_start_at,
+        next_reset_at,
+        baseline_total=delta_baseline_total,
+    )
     remaining_bytes = max(node.traffic_quota_limit_bytes - used_bytes, 0)
     percent_used = 0.0 if node.traffic_quota_limit_bytes == 0 else (used_bytes / node.traffic_quota_limit_bytes) * 100
     return QuotaStatus(

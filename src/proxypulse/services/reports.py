@@ -64,6 +64,32 @@ def format_bytes(num_bytes: int) -> str:
     return f"{num_bytes} B"
 
 
+def counter_delta(current_value: int, previous_value: int) -> int:
+    if current_value >= previous_value:
+        return current_value - previous_value
+    return current_value
+
+
+def accumulate_counter_values(values: list[int]) -> int:
+    total = 0
+    previous_value: int | None = None
+    for value in values:
+        if previous_value is None:
+            previous_value = value
+            continue
+        total += counter_delta(value, previous_value)
+        previous_value = value
+    return total
+
+
+def accumulate_snapshot_traffic(snapshots: list[MetricSnapshot]) -> tuple[int, int]:
+    if not snapshots:
+        return 0, 0
+    rx_total = accumulate_counter_values([snapshot.rx_bytes for snapshot in snapshots])
+    tx_total = accumulate_counter_values([snapshot.tx_bytes for snapshot in snapshots])
+    return rx_total, tx_total
+
+
 async def summarize_traffic_window(
     session: AsyncSession,
     *,
@@ -85,21 +111,16 @@ async def summarize_traffic_window(
     )
     snapshots = list(snapshot_result.scalars().all())
 
-    per_node_bounds: dict[str, tuple[MetricSnapshot, MetricSnapshot]] = {}
+    snapshots_by_node: dict[str, list[MetricSnapshot]] = {}
     for snapshot in snapshots:
-        existing = per_node_bounds.get(snapshot.node_id)
-        if existing is None:
-            per_node_bounds[snapshot.node_id] = (snapshot, snapshot)
-        else:
-            per_node_bounds[snapshot.node_id] = (existing[0], snapshot)
+        snapshots_by_node.setdefault(snapshot.node_id, []).append(snapshot)
 
     node_summaries: list[NodeTrafficSummary] = []
-    for node_id, (first_snapshot, last_snapshot) in per_node_bounds.items():
+    for node_id, node_snapshots in snapshots_by_node.items():
         node = node_map.get(node_id)
         if node is None:
             continue
-        rx_bytes = max(last_snapshot.rx_bytes - first_snapshot.rx_bytes, 0)
-        tx_bytes = max(last_snapshot.tx_bytes - first_snapshot.tx_bytes, 0)
+        rx_bytes, tx_bytes = accumulate_snapshot_traffic(node_snapshots)
         node_summaries.append(NodeTrafficSummary(node_name=node.name, rx_bytes=rx_bytes, tx_bytes=tx_bytes))
 
     node_summaries.sort(key=lambda item: item.node_name)

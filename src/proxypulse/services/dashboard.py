@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from proxypulse.core.config import get_settings
 from proxypulse.core.models import MetricSnapshot, Node
 from proxypulse.services.alerts import count_active_alerts_by_node
+from proxypulse.services.reports import accumulate_snapshot_traffic, counter_delta
 
 settings = get_settings()
 
@@ -92,8 +93,8 @@ def _calculate_rate(latest_row, previous_row) -> NodeRateSummary:
     if elapsed_seconds <= 0:
         return NodeRateSummary(rx_bps=None, tx_bps=None, sample_seconds=None)
 
-    rx_delta = max(latest_row.rx_bytes - previous_row.rx_bytes, 0)
-    tx_delta = max(latest_row.tx_bytes - previous_row.tx_bytes, 0)
+    rx_delta = counter_delta(latest_row.rx_bytes, previous_row.rx_bytes)
+    tx_delta = counter_delta(latest_row.tx_bytes, previous_row.tx_bytes)
     return NodeRateSummary(
         rx_bps=rx_delta / elapsed_seconds,
         tx_bps=tx_delta / elapsed_seconds,
@@ -149,46 +150,26 @@ async def get_traffic_window_map(
     if not node_ids:
         return {}
 
-    ranked_snapshots = (
-        select(
-            MetricSnapshot.node_id.label("node_id"),
-            MetricSnapshot.rx_bytes.label("rx_bytes"),
-            MetricSnapshot.tx_bytes.label("tx_bytes"),
-            func.row_number()
-            .over(partition_by=MetricSnapshot.node_id, order_by=MetricSnapshot.created_at.asc())
-            .label("rank_asc"),
-            func.row_number()
-            .over(partition_by=MetricSnapshot.node_id, order_by=MetricSnapshot.created_at.desc())
-            .label("rank_desc"),
-        )
+    result = await session.execute(
+        select(MetricSnapshot)
         .where(
             MetricSnapshot.node_id.in_(node_ids),
             MetricSnapshot.created_at >= _db_datetime(start_at),
             MetricSnapshot.created_at <= _db_datetime(end_at),
         )
-        .subquery()
-    )
-    result = await session.execute(
-        select(ranked_snapshots).where(
-            (ranked_snapshots.c.rank_asc == 1) | (ranked_snapshots.c.rank_desc == 1)
-        )
+        .order_by(MetricSnapshot.node_id.asc(), MetricSnapshot.created_at.asc())
     )
 
-    first_last_map: dict[str, dict[str, tuple[int, int]]] = {}
-    for row in result.all():
-        slot = first_last_map.setdefault(row.node_id, {})
-        if row.rank_asc == 1:
-            slot["first"] = (row.rx_bytes, row.tx_bytes)
-        if row.rank_desc == 1:
-            slot["last"] = (row.rx_bytes, row.tx_bytes)
+    snapshots_by_node: dict[str, list[MetricSnapshot]] = {}
+    for snapshot in result.scalars().all():
+        snapshots_by_node.setdefault(snapshot.node_id, []).append(snapshot)
 
     traffic_map: dict[str, NodeTrafficWindowSummary] = {}
-    for node_id, bounds in first_last_map.items():
-        first_rx, first_tx = bounds.get("first", (0, 0))
-        last_rx, last_tx = bounds.get("last", (first_rx, first_tx))
+    for node_id, node_snapshots in snapshots_by_node.items():
+        rx_bytes, tx_bytes = accumulate_snapshot_traffic(node_snapshots)
         traffic_map[node_id] = NodeTrafficWindowSummary(
-            rx_bytes=max(last_rx - first_rx, 0),
-            tx_bytes=max(last_tx - first_tx, 0),
+            rx_bytes=rx_bytes,
+            tx_bytes=tx_bytes,
         )
     return traffic_map
 
