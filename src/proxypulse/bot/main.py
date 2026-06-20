@@ -473,13 +473,12 @@ def _chunk_buttons(buttons: list[InlineKeyboardButton], size: int = 3) -> list[l
 
 
 def build_node_list_keyboard(node_names: list[str]) -> InlineKeyboardMarkup | None:
-    rows: list[list[InlineKeyboardButton]] = []
-    if node_names:
-        node_buttons = [InlineKeyboardButton(text=node_name, callback_data=f"{CALLBACK_NODE_PREFIX}{node_name}") for node_name in node_names]
-        rows.extend(_chunk_buttons(node_buttons, size=3))
-    rows.append([InlineKeyboardButton(text="刷新列表", callback_data=CALLBACK_SHOW_NODES)])
-    rows.append([InlineKeyboardButton(text="返回菜单", callback_data=CALLBACK_SHOW_MENU)])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="刷新概览", callback_data=CALLBACK_SHOW_NODES)],
+            [InlineKeyboardButton(text="返回菜单", callback_data=CALLBACK_SHOW_MENU)],
+        ]
+    )
 
 
 def build_node_detail_keyboard(node_name: str) -> InlineKeyboardMarkup:
@@ -674,23 +673,51 @@ def render_node_card(card) -> str:
     node = card.node
     lines = [
         "━━━━━━━━━━",
-        f"{node.name}",
-        f"{format_status_label(node)} · {format_relative_time(node.last_seen_at)} · {format_network_interface_label(node.latest_network_interface)}",
+        f"🖥️ {node.name}",
+        render_metric_pair("状态", format_status_label(node), "上报", format_relative_time(node.last_seen_at)),
+        render_metric_single("网卡", format_network_interface_label(node.latest_network_interface)),
         "",
         *render_metric_block(
-            "资源",
+            "基础信息",
             [
-                ("CPU", format_metric_value(node.latest_cpu_percent), "内存", format_metric_value(node.latest_memory_percent)),
-                ("磁盘", format_metric_value(node.latest_disk_percent), None, None),
+                ("主机", node.hostname or "未上报", "系统", node.platform or "未上报"),
+                ("IP", ", ".join(node.ips) if node.ips else "未上报", None, None),
             ],
         ),
         "",
         *render_metric_block(
-            "流量",
+            "实时状态",
+            [
+                ("CPU", format_metric_value(node.latest_cpu_percent), "核心", format_integer_value(node.latest_cpu_count)),
+                ("负载", f"{node.latest_load_avg_1m:.2f}" if node.latest_load_avg_1m is not None else "暂无", "运行", format_uptime(node.latest_uptime_seconds)),
+                ("内存", format_resource_usage(node.latest_memory_used_bytes, node.latest_memory_total_bytes, node.latest_memory_percent), None, None),
+                ("磁盘", format_resource_usage(node.latest_disk_used_bytes, node.latest_disk_total_bytes, node.latest_disk_percent), None, None),
+            ],
+        ),
+        "",
+        *render_metric_block(
+            "网络流量",
             [
                 ("下行", format_rate_value(card.current_rate.rx_bps), "上行", format_rate_value(card.current_rate.tx_bps)),
+                ("累计↓", format_byte_value(node.latest_rx_bytes), "累计↑", format_byte_value(node.latest_tx_bytes)),
+                ("24h↓", format_byte_value(card.traffic_24h.rx_bytes), "24h↑", format_byte_value(card.traffic_24h.tx_bytes)),
+                ("收包", format_integer_value(node.latest_rx_packets), "发包", format_integer_value(node.latest_tx_packets)),
+                ("RX错/丢", format_network_counter_pair(node.latest_rx_errors, node.latest_rx_dropped), "TX错/丢", format_network_counter_pair(node.latest_tx_errors, node.latest_tx_dropped)),
             ],
         ),
+        "",
+        *render_metric_block(
+            "近 1 小时趋势",
+            [
+                ("CPU", format_avg_peak(card.trend_1h.avg_cpu_percent, card.trend_1h.peak_cpu_percent), None, None),
+                ("内存", format_avg_peak(card.trend_1h.avg_memory_percent, card.trend_1h.peak_memory_percent), None, None),
+                ("磁盘", format_avg_peak(card.trend_1h.avg_disk_percent, card.trend_1h.peak_disk_percent), None, None),
+                ("1h↓", format_byte_value(card.trend_1h.rx_bytes), "1h↑", format_byte_value(card.trend_1h.tx_bytes)),
+                ("样本", str(card.trend_1h.sample_count), "告警", str(card.active_alert_count)),
+            ],
+        ),
+        "",
+        *render_metric_block("流量套餐", format_quota_compact_lines(card.quota_status)),
     ]
     return "\n".join(lines)
 
@@ -772,7 +799,7 @@ async def render_nodes_response() -> tuple[str, InlineKeyboardMarkup | None]:
     ]
     for card in cards:
         lines.extend(["", render_node_card(card)])
-    return "\n".join(lines), build_node_list_keyboard([node.name for node in nodes])
+    return "\n".join(lines), build_node_list_keyboard([])
 
 
 async def render_node_detail(node_name: str) -> tuple[str, InlineKeyboardMarkup]:

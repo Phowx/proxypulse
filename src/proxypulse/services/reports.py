@@ -18,6 +18,8 @@ class NodeTrafficSummary:
     node_name: str
     rx_bytes: int
     tx_bytes: int
+    month_used_bytes: int | None = None
+    available_bytes: int | None = None
 
     @property
     def total_bytes(self) -> int:
@@ -151,6 +153,29 @@ async def summarize_previous_local_day(session: AsyncSession, today_local: date 
         start_at=start_local.astimezone(UTC),
         end_at=end_local.astimezone(UTC),
     )
+
+    month_start_local = datetime.combine(report_day.replace(day=1), time.min, tzinfo=local_tz)
+    month_summary = await summarize_traffic_window(
+        session,
+        title=f"{report_day.strftime('%Y-%m')} 月累计流量",
+        start_at=month_start_local.astimezone(UTC),
+        end_at=end_local.astimezone(UTC),
+    )
+    month_usage_by_node = {item.node_name: item.total_bytes for item in month_summary.node_summaries}
+
+    # Import locally to keep report primitives independent from quota calculations.
+    from proxypulse.services.quota import get_quota_status
+
+    node_result = await session.execute(select(Node).order_by(Node.name.asc()))
+    nodes_by_name = {node.name: node for node in node_result.scalars().all()}
+    for item in summary.node_summaries:
+        item.month_used_bytes = month_usage_by_node.get(item.node_name, 0)
+        node = nodes_by_name.get(item.node_name)
+        if node is None:
+            continue
+        quota_status = await get_quota_status(session, node, now=end_local.astimezone(UTC))
+        if quota_status.configured:
+            item.available_bytes = quota_status.remaining_bytes
     return report_day, summary
 
 
@@ -174,13 +199,21 @@ def format_traffic_summary(summary: TrafficSummary) -> str:
 
     lines.extend(["", "── 节点明细"])
     for item in summary.node_summaries:
-        lines.append(
-            f"━━━━━━━━━━\n"
-            f"🖥️ {item.node_name}\n"
-            f"下行  {format_bytes(item.rx_bytes)}\n"
-            f"上行  {format_bytes(item.tx_bytes)}\n"
-            f"合计  {format_bytes(item.total_bytes)}"
-        )
+        item_lines = [
+            "━━━━━━━━━━",
+            f"🖥️ {item.node_name}",
+            f"下行  {format_bytes(item.rx_bytes)}",
+            f"上行  {format_bytes(item.tx_bytes)}",
+            f"合计  {format_bytes(item.total_bytes)}",
+        ]
+        if item.month_used_bytes is not None:
+            item_lines.append(f"本月累计  {format_bytes(item.month_used_bytes)}")
+            item_lines.append(
+                f"套餐可用  {format_bytes(item.available_bytes)}"
+                if item.available_bytes is not None
+                else "套餐可用  未配置"
+            )
+        lines.append("\n".join(item_lines))
     return "\n".join(lines)
 
 

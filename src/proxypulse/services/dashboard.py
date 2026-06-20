@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from proxypulse.core.config import get_settings
 from proxypulse.core.models import MetricSnapshot, Node
 from proxypulse.services.alerts import count_active_alerts_by_node
+from proxypulse.services.quota import QuotaStatus, get_quota_status
 from proxypulse.services.reports import accumulate_snapshot_traffic, counter_delta
 
 settings = get_settings()
@@ -64,6 +65,8 @@ class NodeCardSummary:
     active_alert_count: int
     current_rate: NodeRateSummary
     traffic_24h: NodeTrafficWindowSummary
+    trend_1h: NodeTrendSummary
+    quota_status: QuotaStatus
 
 
 @dataclass(slots=True)
@@ -238,6 +241,8 @@ async def build_nodes_dashboard(session: AsyncSession, nodes: list[Node]) -> tup
                 active_alert_count=alert_count_map.get(node.id, 0),
                 current_rate=rate_map.get(node.id, NodeRateSummary(None, None, None)),
                 traffic_24h=traffic_map.get(node.id, NodeTrafficWindowSummary(rx_bytes=0, tx_bytes=0)),
+                trend_1h=await get_trend_summary(session, node.id, end_at=now),
+                quota_status=await get_quota_status(session, node, now=now),
             )
         )
 
