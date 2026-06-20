@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase, TestCase
+from unittest.mock import AsyncMock, patch
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from proxypulse.bot import main as bot_main
 from proxypulse.core.db import Base
 from proxypulse.services.report_schedule import get_daily_report_schedule, parse_daily_report_clock, set_daily_report_schedule
 from proxypulse.services.reports import should_send_daily_report
@@ -19,6 +22,30 @@ class ReportScheduleTests(IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self) -> None:
         await self.engine.dispose()
+
+    async def test_sent_daily_report_skips_expensive_summary(self) -> None:
+        class SessionContext:
+            async def __aenter__(self):
+                return object()
+
+            async def __aexit__(self, exc_type, exc, traceback):
+                return False
+
+        summarize = AsyncMock()
+        with (
+            patch.object(bot_main, "SessionLocal", return_value=SessionContext()),
+            patch.object(
+                bot_main,
+                "get_daily_report_schedule",
+                AsyncMock(return_value=SimpleNamespace(hour=0, minute=0)),
+            ),
+            patch.object(bot_main, "should_send_daily_report", return_value=True),
+            patch.object(bot_main, "has_daily_report_run", AsyncMock(return_value=True)),
+            patch.object(bot_main, "summarize_previous_local_day", summarize),
+        ):
+            await bot_main.maybe_send_daily_report(AsyncMock())
+
+        summarize.assert_not_awaited()
 
     async def test_daily_report_schedule_defaults_then_persists_update(self) -> None:
         async with self.session_factory() as session:

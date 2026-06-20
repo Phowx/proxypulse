@@ -25,6 +25,19 @@ async def init_db() -> None:
         await conn.run_sync(Base.metadata.create_all)
         if settings.database_url.startswith("sqlite"):
             await _migrate_sqlite_schema(conn)
+        await _ensure_metric_snapshot_indexes(conn)
+
+
+async def _ensure_metric_snapshot_indexes(conn) -> None:
+    await conn.execute(
+        text("CREATE INDEX IF NOT EXISTS ix_metric_snapshots_created_at ON metric_snapshots (created_at)")
+    )
+    await conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_metric_snapshots_node_created_at "
+            "ON metric_snapshots (node_id, created_at)"
+        )
+    )
 
 
 async def _migrate_sqlite_schema(conn) -> None:

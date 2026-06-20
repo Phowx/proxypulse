@@ -4,7 +4,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Integer, JSON, String, Text, func
+from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Index, Integer, JSON, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from proxypulse.core.db import Base
@@ -86,6 +86,10 @@ class Node(Base):
 
 class MetricSnapshot(Base):
     __tablename__ = "metric_snapshots"
+    __table_args__ = (
+        Index("ix_metric_snapshots_created_at", "created_at"),
+        Index("ix_metric_snapshots_node_created_at", "node_id", "created_at"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     node_id: Mapped[str] = mapped_column(ForeignKey("nodes.id", ondelete="CASCADE"), index=True)

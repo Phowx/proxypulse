@@ -5,12 +5,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from proxypulse.core.config import get_settings
 from proxypulse.core.models import MetricSnapshot, Node, TrafficQuotaCycle
-from proxypulse.services.reports import counter_delta
 from proxypulse.services.reports import format_bytes
 
 settings = get_settings()
@@ -117,26 +116,37 @@ async def _sum_total_usage_in_window(
     *,
     baseline_total: int | None = None,
 ) -> int:
-    result = await session.execute(
-        select(MetricSnapshot.rx_bytes, MetricSnapshot.tx_bytes)
+    current_total = (MetricSnapshot.rx_bytes + MetricSnapshot.tx_bytes).label("current_total")
+    previous_total = func.lag(MetricSnapshot.rx_bytes + MetricSnapshot.tx_bytes).over(
+        order_by=(MetricSnapshot.created_at.asc(), MetricSnapshot.id.asc())
+    ).label("previous_total")
+    ordered = (
+        select(current_total, previous_total)
         .where(
             MetricSnapshot.node_id == node_id,
             MetricSnapshot.created_at >= _db_datetime(start_at),
             MetricSnapshot.created_at < _db_datetime(end_at),
         )
-        .order_by(MetricSnapshot.created_at.asc())
+        .subquery()
     )
 
-    total_usage = 0
-    previous_total = baseline_total
-    for rx_bytes, tx_bytes in result.all():
-        current_total = rx_bytes + tx_bytes
-        if previous_total is None:
-            previous_total = current_total
-            continue
-        total_usage += counter_delta(current_total, previous_total)
-        previous_total = current_total
-    return total_usage
+    if baseline_total is None:
+        first_delta = 0
+    else:
+        first_delta = case(
+            (ordered.c.current_total >= baseline_total, ordered.c.current_total - baseline_total),
+            else_=ordered.c.current_total,
+        )
+    delta = case(
+        (ordered.c.previous_total.is_(None), first_delta),
+        (
+            ordered.c.current_total >= ordered.c.previous_total,
+            ordered.c.current_total - ordered.c.previous_total,
+        ),
+        else_=ordered.c.current_total,
+    )
+    result = await session.execute(select(func.coalesce(func.sum(delta), 0)))
+    return int(result.scalar_one())
 
 
 def _current_total_bytes(node: Node) -> int:

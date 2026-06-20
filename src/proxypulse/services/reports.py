@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from proxypulse.core.config import get_settings
@@ -92,6 +92,54 @@ def accumulate_snapshot_traffic(snapshots: list[MetricSnapshot]) -> tuple[int, i
     return rx_total, tx_total
 
 
+async def sum_snapshot_traffic_by_node(
+    session: AsyncSession,
+    *,
+    start_at: datetime,
+    end_at: datetime,
+    node_ids: list[str] | None = None,
+) -> dict[str, tuple[int, int]]:
+    order_columns = (MetricSnapshot.created_at.asc(), MetricSnapshot.id.asc())
+    ordered_query = select(
+        MetricSnapshot.node_id.label("node_id"),
+        MetricSnapshot.rx_bytes.label("rx_bytes"),
+        MetricSnapshot.tx_bytes.label("tx_bytes"),
+        func.lag(MetricSnapshot.rx_bytes)
+        .over(partition_by=MetricSnapshot.node_id, order_by=order_columns)
+        .label("previous_rx_bytes"),
+        func.lag(MetricSnapshot.tx_bytes)
+        .over(partition_by=MetricSnapshot.node_id, order_by=order_columns)
+        .label("previous_tx_bytes"),
+    ).where(
+        MetricSnapshot.created_at >= _db_datetime(start_at),
+        MetricSnapshot.created_at <= _db_datetime(end_at),
+    )
+    if node_ids is not None:
+        if not node_ids:
+            return {}
+        ordered_query = ordered_query.where(MetricSnapshot.node_id.in_(node_ids))
+
+    ordered = ordered_query.subquery()
+    rx_delta = case(
+        (ordered.c.previous_rx_bytes.is_(None), 0),
+        (ordered.c.rx_bytes >= ordered.c.previous_rx_bytes, ordered.c.rx_bytes - ordered.c.previous_rx_bytes),
+        else_=ordered.c.rx_bytes,
+    )
+    tx_delta = case(
+        (ordered.c.previous_tx_bytes.is_(None), 0),
+        (ordered.c.tx_bytes >= ordered.c.previous_tx_bytes, ordered.c.tx_bytes - ordered.c.previous_tx_bytes),
+        else_=ordered.c.tx_bytes,
+    )
+    result = await session.execute(
+        select(
+            ordered.c.node_id,
+            func.coalesce(func.sum(rx_delta), 0),
+            func.coalesce(func.sum(tx_delta), 0),
+        ).group_by(ordered.c.node_id)
+    )
+    return {node_id: (int(rx_bytes), int(tx_bytes)) for node_id, rx_bytes, tx_bytes in result.all()}
+
+
 async def summarize_traffic_window(
     session: AsyncSession,
     *,
@@ -103,27 +151,20 @@ async def summarize_traffic_window(
     nodes = list(node_result.scalars().all())
     node_map = {node.id: node for node in nodes}
 
-    snapshot_result = await session.execute(
-        select(MetricSnapshot)
-        .where(
-            MetricSnapshot.created_at >= _db_datetime(start_at),
-            MetricSnapshot.created_at <= _db_datetime(end_at),
-        )
-        .order_by(MetricSnapshot.node_id.asc(), MetricSnapshot.created_at.asc())
-    )
-    snapshots = list(snapshot_result.scalars().all())
-
-    snapshots_by_node: dict[str, list[MetricSnapshot]] = {}
-    for snapshot in snapshots:
-        snapshots_by_node.setdefault(snapshot.node_id, []).append(snapshot)
+    totals = await sum_snapshot_traffic_by_node(session, start_at=start_at, end_at=end_at)
 
     node_summaries: list[NodeTrafficSummary] = []
-    for node_id, node_snapshots in snapshots_by_node.items():
+    for node_id, (rx_bytes, tx_bytes) in totals.items():
         node = node_map.get(node_id)
         if node is None:
             continue
-        rx_bytes, tx_bytes = accumulate_snapshot_traffic(node_snapshots)
-        node_summaries.append(NodeTrafficSummary(node_name=node.name, rx_bytes=rx_bytes, tx_bytes=tx_bytes))
+        node_summaries.append(
+            NodeTrafficSummary(
+                node_name=node.name,
+                rx_bytes=rx_bytes,
+                tx_bytes=tx_bytes,
+            )
+        )
 
     node_summaries.sort(key=lambda item: item.node_name)
     return TrafficSummary(title=title, start_at=start_at, end_at=end_at, node_summaries=node_summaries)

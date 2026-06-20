@@ -3,12 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from proxypulse.core.config import get_settings
 from proxypulse.core.models import MetricSnapshot, Node
-from proxypulse.services.reports import format_bytes
+from proxypulse.services.reports import counter_delta, format_bytes, sum_snapshot_traffic_by_node
 
 AGGREGATE_INTERFACE_NAME = "aggregate"
 settings = get_settings()
@@ -94,40 +94,52 @@ async def build_traffic_diagnosis(
     now = _ensure_aware(now or datetime.now(UTC))
     window_start = now - timedelta(hours=24)
 
-    window_result = await session.execute(
-        select(MetricSnapshot)
-        .where(
-            MetricSnapshot.node_id == node.id,
-            MetricSnapshot.created_at >= _db_datetime(window_start),
-            MetricSnapshot.created_at <= _db_datetime(now),
-        )
-        .order_by(MetricSnapshot.created_at.asc())
+    window_filter = (
+        MetricSnapshot.node_id == node.id,
+        MetricSnapshot.created_at >= _db_datetime(window_start),
+        MetricSnapshot.created_at <= _db_datetime(now),
     )
-    window_snapshots = list(window_result.scalars().all())
+    count_result = await session.execute(
+        select(func.count(MetricSnapshot.id)).where(*window_filter)
+    )
+    snapshot_count_24h = int(count_result.scalar_one())
+    traffic_map = await sum_snapshot_traffic_by_node(
+        session,
+        start_at=window_start,
+        end_at=now,
+        node_ids=[node.id],
+    )
+    traffic_24h_rx_bytes, traffic_24h_tx_bytes = traffic_map.get(node.id, (0, 0))
 
-    traffic_24h_rx_bytes = 0
-    traffic_24h_tx_bytes = 0
-    if window_snapshots:
-        traffic_24h_rx_bytes = max(window_snapshots[-1].rx_bytes - window_snapshots[0].rx_bytes, 0)
-        traffic_24h_tx_bytes = max(window_snapshots[-1].tx_bytes - window_snapshots[0].tx_bytes, 0)
+    interface_result = await session.execute(
+        select(MetricSnapshot.network_interface)
+        .where(
+            *window_filter,
+            MetricSnapshot.network_interface.is_not(None),
+        )
+        .distinct()
+    )
+    interfaces_seen = {value for value in interface_result.scalars().all() if value}
 
     recent_result = await session.execute(
-        select(MetricSnapshot)
+        select(
+            MetricSnapshot.created_at,
+            MetricSnapshot.network_interface,
+            MetricSnapshot.rx_bytes,
+            MetricSnapshot.tx_bytes,
+        )
         .where(MetricSnapshot.node_id == node.id)
         .order_by(MetricSnapshot.created_at.desc())
         .limit(recent_limit)
     )
-    recent_snapshots = list(recent_result.scalars().all())
+    recent_snapshots = list(recent_result.all())
     recent_snapshots.reverse()
 
     recent_samples: list[RecentTrafficSample] = []
-    previous_snapshot: MetricSnapshot | None = None
-    interfaces_seen = {
-        snapshot.network_interface
-        for snapshot in [*window_snapshots[-recent_limit:], *recent_snapshots]
-        if snapshot.network_interface
-    }
+    previous_snapshot = None
     for snapshot in recent_snapshots:
+        if snapshot.network_interface:
+            interfaces_seen.add(snapshot.network_interface)
         rx_delta = None
         tx_delta = None
         elapsed_seconds = None
@@ -136,8 +148,8 @@ async def build_traffic_diagnosis(
                 (_ensure_aware(snapshot.created_at) - _ensure_aware(previous_snapshot.created_at)).total_seconds(),
                 0.0,
             )
-            rx_delta = max(snapshot.rx_bytes - previous_snapshot.rx_bytes, 0)
-            tx_delta = max(snapshot.tx_bytes - previous_snapshot.tx_bytes, 0)
+            rx_delta = counter_delta(snapshot.rx_bytes, previous_snapshot.rx_bytes)
+            tx_delta = counter_delta(snapshot.tx_bytes, previous_snapshot.tx_bytes)
         recent_samples.append(
             RecentTrafficSample(
                 created_at=_ensure_aware(snapshot.created_at),
@@ -153,7 +165,7 @@ async def build_traffic_diagnosis(
 
     return TrafficDiagnosis(
         node=node,
-        snapshot_count_24h=len(window_snapshots),
+        snapshot_count_24h=snapshot_count_24h,
         traffic_24h_rx_bytes=traffic_24h_rx_bytes,
         traffic_24h_tx_bytes=traffic_24h_tx_bytes,
         interfaces_seen=sorted(interfaces_seen),

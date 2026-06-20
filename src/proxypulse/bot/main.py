@@ -4,7 +4,7 @@ import asyncio
 import html
 import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 from zoneinfo import ZoneInfo
 
@@ -1748,9 +1748,10 @@ async def maybe_send_daily_report(bot: Bot) -> None:
         schedule = await get_daily_report_schedule(session)
         if not should_send_daily_report(local_now, hour=schedule.hour, minute=schedule.minute):
             return
-        report_day, summary = await summarize_previous_local_day(session, today_local=local_now.date())
+        report_day = local_now.date() - timedelta(days=1)
         if await has_daily_report_run(session, report_day):
             return
+        _, summary = await summarize_previous_local_day(session, today_local=local_now.date())
 
         text = format_traffic_summary(summary)
         for admin_id in settings.admin_telegram_ids:

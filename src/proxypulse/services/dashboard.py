@@ -10,7 +10,7 @@ from proxypulse.core.config import get_settings
 from proxypulse.core.models import MetricSnapshot, Node
 from proxypulse.services.alerts import count_active_alerts_by_node
 from proxypulse.services.quota import QuotaStatus, get_quota_status
-from proxypulse.services.reports import accumulate_snapshot_traffic, counter_delta
+from proxypulse.services.reports import counter_delta, sum_snapshot_traffic_by_node
 
 settings = get_settings()
 
@@ -109,31 +109,19 @@ async def get_current_rate_map(session: AsyncSession, node_ids: list[str]) -> di
     if not node_ids:
         return {}
 
-    ranked_snapshots = (
-        select(
-            MetricSnapshot.node_id.label("node_id"),
-            MetricSnapshot.created_at.label("created_at"),
-            MetricSnapshot.rx_bytes.label("rx_bytes"),
-            MetricSnapshot.tx_bytes.label("tx_bytes"),
-            func.row_number()
-            .over(partition_by=MetricSnapshot.node_id, order_by=MetricSnapshot.created_at.desc())
-            .label("rank_desc"),
-        )
-        .where(MetricSnapshot.node_id.in_(node_ids))
-        .subquery()
-    )
-    result = await session.execute(
-        select(ranked_snapshots)
-        .where(ranked_snapshots.c.rank_desc <= 2)
-        .order_by(ranked_snapshots.c.node_id.asc(), ranked_snapshots.c.rank_desc.asc())
-    )
-
-    rows_by_node: dict[str, list] = {}
-    for row in result.all():
-        rows_by_node.setdefault(row.node_id, []).append(row)
-
     rate_map: dict[str, NodeRateSummary] = {}
-    for node_id, rows in rows_by_node.items():
+    for node_id in node_ids:
+        result = await session.execute(
+            select(
+                MetricSnapshot.created_at,
+                MetricSnapshot.rx_bytes,
+                MetricSnapshot.tx_bytes,
+            )
+            .where(MetricSnapshot.node_id == node_id)
+            .order_by(MetricSnapshot.created_at.desc())
+            .limit(2)
+        )
+        rows = result.all()
         if len(rows) < 2:
             rate_map[node_id] = NodeRateSummary(rx_bps=None, tx_bps=None, sample_seconds=None)
             continue
@@ -153,28 +141,16 @@ async def get_traffic_window_map(
     if not node_ids:
         return {}
 
-    result = await session.execute(
-        select(MetricSnapshot)
-        .where(
-            MetricSnapshot.node_id.in_(node_ids),
-            MetricSnapshot.created_at >= _db_datetime(start_at),
-            MetricSnapshot.created_at <= _db_datetime(end_at),
-        )
-        .order_by(MetricSnapshot.node_id.asc(), MetricSnapshot.created_at.asc())
+    totals = await sum_snapshot_traffic_by_node(
+        session,
+        start_at=start_at,
+        end_at=end_at,
+        node_ids=node_ids,
     )
-
-    snapshots_by_node: dict[str, list[MetricSnapshot]] = {}
-    for snapshot in result.scalars().all():
-        snapshots_by_node.setdefault(snapshot.node_id, []).append(snapshot)
-
-    traffic_map: dict[str, NodeTrafficWindowSummary] = {}
-    for node_id, node_snapshots in snapshots_by_node.items():
-        rx_bytes, tx_bytes = accumulate_snapshot_traffic(node_snapshots)
-        traffic_map[node_id] = NodeTrafficWindowSummary(
-            rx_bytes=rx_bytes,
-            tx_bytes=tx_bytes,
-        )
-    return traffic_map
+    return {
+        node_id: NodeTrafficWindowSummary(rx_bytes=rx_bytes, tx_bytes=tx_bytes)
+        for node_id, (rx_bytes, tx_bytes) in totals.items()
+    }
 
 
 async def get_trend_summary(

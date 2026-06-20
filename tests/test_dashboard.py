@@ -21,6 +21,15 @@ class DashboardTests(IsolatedAsyncioTestCase):
     async def asyncTearDown(self) -> None:
         await self.engine.dispose()
 
+    async def test_metric_snapshot_time_indexes_are_declared(self) -> None:
+        indexes = {
+            index.name: tuple(column.name for column in index.columns)
+            for index in MetricSnapshot.__table__.indexes
+        }
+
+        self.assertEqual(indexes["ix_metric_snapshots_created_at"], ("created_at",))
+        self.assertEqual(indexes["ix_metric_snapshots_node_created_at"], ("node_id", "created_at"))
+
     async def test_rate_and_trend_use_snapshot_deltas(self) -> None:
         now = datetime(2026, 3, 25, 12, 0, tzinfo=timezone.utc)
         async with self.session_factory() as session:
