@@ -49,7 +49,6 @@ from proxypulse.services.quota import (
     configure_interval_quota,
     configure_monthly_quota,
     days_until_reset,
-    format_quota_status,
     get_quota_status,
     parse_limit_gib,
     parse_used_gib,
@@ -345,102 +344,88 @@ def build_dns_confirm_keyboard(action: Literal["create", "update", "delete"]) ->
 
 def render_dns_record_text(record: CloudflareDNSRecord, zone_name: str) -> str:
     lines = [
-        f"☁️ DNS 记录 | {record.name}",
-        "",
-        f"Zone {zone_name}",
-        f"类型 {record.type}",
-        f"值 {record.content}",
-        f"TTL {format_dns_ttl(record.ttl)}",
-        f"代理 {format_dns_proxied(record.proxied)}",
+        f"Zone {html_code(zone_name)}",
+        f"类型 {html_code(record.type)} · TTL {html_code(format_dns_ttl(record.ttl))}",
+        f"值 {html_code(record.content)}",
+        f"代理 {html_code(format_dns_proxied(record.proxied))}",
     ]
     if record.comment:
-        lines.append(f"备注 {record.comment}")
-    return "\n".join(lines)
+        lines.append(f"备注 {html.escape(record.comment)}")
+    return f"<b>☁️ DNS 记录 · {html.escape(record.name)}</b>\n{html_card('记录信息', lines)}"
 
 
 def render_dns_draft_preview(draft: DnsDraft, zone_name: str) -> str:
     action_label = "新增记录" if draft.mode == "create" else "更新记录"
     lines = [
-        f"☁️ DNS 预览 | {action_label}",
-        "",
-        f"Zone {zone_name}",
-        f"类型 {draft.record_type}",
-        f"名称 {draft.name}",
-        f"值 {draft.content}",
-        f"TTL {format_dns_ttl(draft.ttl)}",
+        f"Zone {html_code(zone_name)}",
+        f"类型 {html_code(draft.record_type)} · TTL {html_code(format_dns_ttl(draft.ttl))}",
+        f"名称 {html_code(draft.name)}",
+        f"值 {html_code(draft.content)}",
     ]
     if draft.record_type in {"A", "AAAA", "CNAME"}:
-        lines.append(f"代理 {format_dns_proxied(draft.proxied)}")
+        lines.append(f"代理 {html_code(format_dns_proxied(draft.proxied))}")
+    cards = [html_card("待提交", lines)]
     if draft.mode == "update" and draft.original_record is not None:
-        lines.extend(
-            [
-                "",
-                "当前值",
-                f"• 名称 {draft.original_record.name}",
-                f"• 值 {draft.original_record.content}",
-                f"• TTL {format_dns_ttl(draft.original_record.ttl)}",
-                f"• 代理 {format_dns_proxied(draft.original_record.proxied)}",
-            ]
+        cards.append(
+            html_card(
+                "当前记录",
+                [
+                    f"名称 {html_code(draft.original_record.name)}",
+                    f"值 {html_code(draft.original_record.content)}",
+                    f"TTL {html_code(format_dns_ttl(draft.original_record.ttl))}",
+                    f"代理 {html_code(format_dns_proxied(draft.original_record.proxied))}",
+                ],
+            )
         )
-    return "\n".join(lines)
+    return f"<b>☁️ DNS 预览 · {action_label}</b>\n" + "\n\n".join(cards)
 
 
 def render_dns_list_text(record_page: CloudflareDNSRecordPage) -> str:
     lines = [
-        f"☁️ DNS 列表 | {record_page.zone.zone_name}",
-        "",
-        f"页码 {record_page.page}/{record_page.total_pages}",
-        f"记录 {record_page.total_count} 条",
-        "",
+        f"页码 {html_code(f'{record_page.page}/{record_page.total_pages}')} · 记录 {html_code(str(record_page.total_count))} 条",
         "点击下方记录进入详情。",
     ]
     if not record_page.records:
-        lines.extend(["", "当前 Zone 还没有受支持的记录类型。"])
-    return "\n".join(lines)
+        lines.append("当前 Zone 还没有受支持的记录类型。")
+    return f"<b>☁️ DNS 列表 · {html.escape(record_page.zone.zone_name)}</b>\n{html_card('记录概况', lines)}"
 
 
 def render_dns_zone_text(zone_name: str, zone_key: str) -> str:
-    return "\n".join(
-        [
-            f"☁️ DNS 管理 | {zone_name}",
-            "",
-            f"标识 {zone_key}",
-            "选择要执行的操作。",
-        ]
+    return (
+        f"<b>☁️ DNS 管理 · {html.escape(zone_name)}</b>\n"
+        f"{html_card('Zone', [f'标识 {html_code(zone_key)}', '选择要执行的操作。'])}"
     )
 
 
 def render_dns_home_text(service: CloudflareDNSService) -> str:
     lines = [
-        "☁️ DNS 管理",
-        "",
-        f"已配置 Zone {len(service.list_configured_zones())} 个",
+        f"已配置 Zone {html_code(str(len(service.list_configured_zones())))} 个",
         "先选择一个 Zone，再查看记录或新增记录。",
     ]
-    return "\n".join(lines)
+    return f"<b>☁️ DNS 管理</b>\n{html_card('概况', lines)}"
 
 
 def render_dns_prompt_text(*, title: str, field_label: str, hint: str, current_value: str | None = None) -> str:
-    lines = [f"☁️ DNS 流程 | {title}", "", f"请发送 {field_label}。", hint]
+    lines = [f"请发送 <b>{html.escape(field_label)}</b>。", html.escape(hint)]
     if current_value:
-        lines.extend(["", f"当前值 {current_value}"])
-    return "\n".join(lines)
+        lines.append(f"当前值 {html_code(current_value)}")
+    return f"<b>☁️ DNS 流程 · {html.escape(title)}</b>\n{html_card('下一步', lines)}"
 
 
 def render_dns_delete_preview(record: CloudflareDNSRecord, zone_name: str) -> str:
-    return "\n".join(
-        [
-            f"☁️ DNS 预览 | 删除记录",
-            "",
-            f"Zone {zone_name}",
-            f"名称 {record.name}",
-            f"类型 {record.type}",
-            f"值 {record.content}",
-            f"TTL {format_dns_ttl(record.ttl)}",
-            f"代理 {format_dns_proxied(record.proxied)}",
-            "",
-            "确认删除吗？",
-        ]
+    return (
+        "<b>☁️ DNS 预览 · 删除记录</b>\n"
+        + html_card(
+            "待删除",
+            [
+                f"Zone {html_code(zone_name)}",
+                f"名称 {html_code(record.name)}",
+                f"类型 {html_code(record.type)} · TTL {html_code(format_dns_ttl(record.ttl))}",
+                f"值 {html_code(record.content)}",
+                f"代理 {html_code(format_dns_proxied(record.proxied))}",
+                "⚠️ 确认删除吗？",
+            ],
+        )
     )
 
 
@@ -466,7 +451,7 @@ def _dashboard_button_callback(label: str) -> str:
 
 
 def build_dashboard_menu_text() -> str:
-    return "ProxyPulse 控制台已就绪。"
+    return "<b>⚡ ProxyPulse 控制台</b>\n" + html_card("服务状态", ["控制台已就绪，请选择功能。"])
 
 
 def _chunk_buttons(buttons: list[InlineKeyboardButton], size: int = 3) -> list[list[InlineKeyboardButton]]:
@@ -592,10 +577,6 @@ def format_uptime(value: int | None) -> str:
     return f"{minutes}m"
 
 
-def format_avg_peak(avg_value: float | None, peak_value: float | None) -> str:
-    return f"均值 {format_metric_value(avg_value)} | 峰值 {format_metric_value(peak_value)}"
-
-
 def format_avg_peak_values(avg_value: float | None, peak_value: float | None) -> str:
     return f"{format_metric_value(avg_value)} / {format_metric_value(peak_value)}"
 
@@ -614,32 +595,17 @@ def format_network_counter_pair(left_value: int | None, right_value: int | None)
     return f"{format_integer_value(left_value)} / {format_integer_value(right_value)}"
 
 
-def render_section(title: str, rows: list[str]) -> list[str]:
-    return [f"── {title}", *rows]
-
-
-def render_metric_pair(left_label: str, left_value: str, right_label: str, right_value: str) -> str:
-    left_cell = f"{left_label} {left_value}"
-    padding = " " * max(26 - len(left_cell), 0)
-    return f"{left_cell}{padding}  │  {right_label} {right_value}"
-
-
-def render_metric_single(label: str, value: str) -> str:
-    return f"{label} {value}"
-
-
-def render_metric_block(title: str, rows: list[tuple[str, str, str | None, str | None]]) -> list[str]:
-    rendered = [f"── {title}"]
-    for left_label, left_value, right_label, right_value in rows:
-        if right_label is None or right_value is None:
-            rendered.append(render_metric_single(left_label, left_value))
-        else:
-            rendered.append(render_metric_pair(left_label, left_value, right_label, right_value))
-    return rendered
-
-
 def html_code(value: str) -> str:
     return f"<code>{html.escape(value)}</code>"
+
+
+def html_card(title: str, lines: list[str]) -> str:
+    body = "\n".join([f"<b>{html.escape(title)}</b>", *lines])
+    return f"<blockquote>{body}</blockquote>"
+
+
+def html_error(title: str, error: object) -> str:
+    return f"<b>{html.escape(title)}</b>\n{html_card('操作失败', [html.escape(str(error))])}"
 
 
 def format_reset_phrase(next_reset_at: datetime | None, *, now: datetime | None = None) -> str:
@@ -668,41 +634,35 @@ def render_overview_quota_html(status, *, now: datetime | None = None) -> list[s
     ]
 
 
-def format_quota_compact_lines(status) -> list[tuple[str, str, str | None, str | None]]:
+def render_quota_detail_html(status) -> list[str]:
     if not status.configured:
-        return [("套餐", "未配置", None, None)]
+        return ["套餐未配置"]
 
     percent = f"{status.percent_used:.1f}%" if status.percent_used is not None else "暂无"
-    rows: list[tuple[str, str, str | None, str | None]] = [
-        ("上限", format_byte_value(status.limit_bytes), "已用", format_byte_value(status.used_bytes)),
-        ("剩余", format_byte_value(status.remaining_bytes), "进度", percent),
-        ("倒计时", format_reset_phrase(status.next_reset_at), None, None),
-        ("周期", status.cycle_description or "未配置", None, None),
+    lines = [
+        f"上限 {html_code(format_byte_value(status.limit_bytes))} · 已用 {html_code(format_byte_value(status.used_bytes))}",
+        f"剩余 {html_code(format_byte_value(status.remaining_bytes))} · 进度 {html_code(percent)}",
+        f"重置 {html_code(format_reset_phrase(status.next_reset_at))}",
+        f"周期 {html_code(status.cycle_description or '未配置')}",
     ]
     if status.period_start is not None and status.next_reset_at is not None:
-        rows.append(
-            (
-                "开始",
-                status.period_start.astimezone(ZoneInfo(settings.report_timezone)).strftime("%m-%d %H:%M"),
-                "重置",
-                status.next_reset_at.astimezone(ZoneInfo(settings.report_timezone)).strftime("%m-%d %H:%M"),
-            )
+        lines.append(
+            "区间 "
+            f"{html_code(status.period_start.astimezone(ZoneInfo(settings.report_timezone)).strftime('%m-%d %H:%M'))}"
+            " → "
+            f"{html_code(status.next_reset_at.astimezone(ZoneInfo(settings.report_timezone)).strftime('%m-%d %H:%M'))}"
         )
     elif status.period_start is not None:
-        rows.append(
-            ("开始", status.period_start.astimezone(ZoneInfo(settings.report_timezone)).strftime("%m-%d %H:%M"), None, None)
+        lines.append(
+            f"开始 {html_code(status.period_start.astimezone(ZoneInfo(settings.report_timezone)).strftime('%m-%d %H:%M'))}"
         )
     elif status.next_reset_at is not None:
-        rows.append(
-            ("重置", status.next_reset_at.astimezone(ZoneInfo(settings.report_timezone)).strftime("%m-%d %H:%M"), None, None)
+        lines.append(
+            f"重置 {html_code(status.next_reset_at.astimezone(ZoneInfo(settings.report_timezone)).strftime('%m-%d %H:%M'))}"
         )
     if status.calibration_bytes is not None:
-        rows.append(("校准", format_byte_value(status.calibration_bytes), None, None))
-    return rows
-
-
-def render_panel(text: str) -> str:
-    return f"<pre>{html.escape(text)}</pre>"
+        lines.append(f"校准 {html_code(format_byte_value(status.calibration_bytes))}")
+    return lines
 
 
 def render_node_card(card) -> str:
@@ -742,19 +702,26 @@ def render_node_card(card) -> str:
 
 def render_quota_help_lines() -> list[str]:
     return [
-        "📦 流量套餐命令",
-        "/quota <节点名> 查看当前套餐状态",
-        "/quota_monthly <节点名> <上限GiB> <每月重置日> <HH:MM>",
-        "/quota_interval <节点名> <上限GiB> <间隔天数> <YYYY-MM-DDTHH:MM>",
-        "/quota_calibrate <节点名> <已用GiB>",
-        "/quota_clear <节点名>",
-        "",
-        "说明：未带时区的时间按服务端配置时区解释。",
-        "",
-        "示例：",
-        "/quota_monthly tokyo 1000 1 00:00",
-        "/quota_interval la 750 30 2026-03-25T08:00",
-        "/quota_calibrate tokyo 123.5",
+        "<b>📦 流量套餐命令</b>",
+        html_card(
+            "查看与管理",
+            [
+                f"查看 {html_code('/quota <节点名>')}",
+                f"月度 {html_code('/quota_monthly <节点名> <上限GiB> <重置日> <HH:MM>')}",
+                f"循环 {html_code('/quota_interval <节点名> <上限GiB> <间隔天数> <起始时间>')}",
+                f"校准 {html_code('/quota_calibrate <节点名> <已用GiB>')}",
+                f"清除 {html_code('/quota_clear <节点名>')}",
+            ],
+        ),
+        html_card(
+            "示例",
+            [
+                html_code("/quota_monthly tokyo 1000 1 00:00"),
+                html_code("/quota_interval la 750 30 2026-03-25T08:00"),
+                html_code("/quota_calibrate tokyo 123.5"),
+                "未带时区的时间按服务端配置时区解释。",
+            ],
+        ),
     ]
 
 
@@ -781,22 +748,19 @@ def _parse_local_datetime(value: str) -> datetime:
 
 
 async def send_dashboard(message: Message) -> None:
-    await message.answer(render_panel(build_dashboard_menu_text()), parse_mode="HTML", reply_markup=build_dashboard_keyboard())
+    await message.answer(build_dashboard_menu_text(), parse_mode="HTML", reply_markup=build_dashboard_keyboard())
 
 
 async def safe_edit_callback_message(
     callback: CallbackQuery,
     text: str,
     reply_markup: InlineKeyboardMarkup | None,
-    *,
-    rich_html: bool = False,
 ) -> None:
     if callback.message is None:
         await callback.answer()
         return
     try:
-        rendered_text = text if rich_html else render_panel(text)
-        await callback.message.edit_text(rendered_text, parse_mode="HTML", reply_markup=reply_markup)
+        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=reply_markup)
     except TelegramBadRequest as exc:
         if "message is not modified" not in str(exc).lower():
             raise
@@ -832,58 +796,51 @@ async def render_node_detail(node_name: str) -> tuple[str, InlineKeyboardMarkup]
     if node is None:
         return "未找到对应节点。", build_single_action_keyboard(CALLBACK_SHOW_NODES)
 
-    quota_lines = format_quota_compact_lines(quota_status)
-    lines = [
-        f"🖥️ 节点详情 | {node.name}",
-        "",
-        render_metric_pair("状态", format_status_label(node), "上报", format_relative_time(node.last_seen_at)),
-        render_metric_single("网卡", format_network_interface_label(node.latest_network_interface)),
-        "",
-        *render_metric_block(
+    load = f"{node.latest_load_avg_1m:.2f}" if node.latest_load_avg_1m is not None else "暂无"
+    title = (
+        f"<b>🖥️ {html.escape(node.name)}</b>  {format_status_label(node)}"
+        f" · {html.escape(format_relative_time(node.last_seen_at))}"
+    )
+    cards = [
+        html_card(
             "基础信息",
             [
-                ("主机", node.hostname or "未上报", "系统", node.platform or "未上报"),
-                ("IP", ", ".join(node.ips) if node.ips else "未上报", None, None),
+                f"主机 {html_code(node.hostname or '未上报')} · 系统 {html_code(node.platform or '未上报')}",
+                f"IP {html_code(', '.join(node.ips) if node.ips else '未上报')}",
+                f"网卡 {html_code(format_network_interface_label(node.latest_network_interface))}",
             ],
         ),
-        "",
-        *render_metric_block(
+        html_card(
             "实时状态",
             [
-                ("CPU", format_metric_value(node.latest_cpu_percent), "核心", format_integer_value(node.latest_cpu_count)),
-                ("负载", f"{node.latest_load_avg_1m:.2f}" if node.latest_load_avg_1m is not None else "暂无", "运行", format_uptime(node.latest_uptime_seconds)),
-                ("内存", format_resource_usage(node.latest_memory_used_bytes, node.latest_memory_total_bytes, node.latest_memory_percent), None, None),
-                ("磁盘", format_resource_usage(node.latest_disk_used_bytes, node.latest_disk_total_bytes, node.latest_disk_percent), None, None),
+                f"CPU {html_code(format_metric_value(node.latest_cpu_percent))} · 核心 {html_code(format_integer_value(node.latest_cpu_count))}",
+                f"负载 {html_code(load)} · 运行 {html_code(format_uptime(node.latest_uptime_seconds))}",
+                f"内存 {html_code(format_resource_usage(node.latest_memory_used_bytes, node.latest_memory_total_bytes, node.latest_memory_percent))}",
+                f"磁盘 {html_code(format_resource_usage(node.latest_disk_used_bytes, node.latest_disk_total_bytes, node.latest_disk_percent))}",
             ],
         ),
-        "",
-        *render_metric_block(
+        html_card(
             "网络流量",
             [
-                ("下行", format_rate_value(detail_summary.current_rate.rx_bps), "上行", format_rate_value(detail_summary.current_rate.tx_bps)),
-                ("累计↓", format_byte_value(node.latest_rx_bytes), "累计↑", format_byte_value(node.latest_tx_bytes)),
-                ("收包", format_integer_value(node.latest_rx_packets), "发包", format_integer_value(node.latest_tx_packets)),
-                ("RX错/丢", format_network_counter_pair(node.latest_rx_errors, node.latest_rx_dropped), "TX错/丢", format_network_counter_pair(node.latest_tx_errors, node.latest_tx_dropped)),
+                f"实时 ↓ {html_code(format_rate_value(detail_summary.current_rate.rx_bps))} · ↑ {html_code(format_rate_value(detail_summary.current_rate.tx_bps))}",
+                f"累计 ↓ {html_code(format_byte_value(node.latest_rx_bytes))} · ↑ {html_code(format_byte_value(node.latest_tx_bytes))}",
+                f"数据包 收 {html_code(format_integer_value(node.latest_rx_packets))} · 发 {html_code(format_integer_value(node.latest_tx_packets))}",
+                f"错/丢 RX {html_code(format_network_counter_pair(node.latest_rx_errors, node.latest_rx_dropped))} · TX {html_code(format_network_counter_pair(node.latest_tx_errors, node.latest_tx_dropped))}",
             ],
         ),
-        "",
-        *render_metric_block(
-            "近 1 小时趋势",
+        html_card(
+            "近 1 小时 · 均值 / 峰值",
             [
-                ("CPU", format_avg_peak(detail_summary.trend_1h.avg_cpu_percent, detail_summary.trend_1h.peak_cpu_percent), None, None),
-                ("内存", format_avg_peak(detail_summary.trend_1h.avg_memory_percent, detail_summary.trend_1h.peak_memory_percent), None, None),
-                ("磁盘", format_avg_peak(detail_summary.trend_1h.avg_disk_percent, detail_summary.trend_1h.peak_disk_percent), None, None),
-                ("1h↓", format_byte_value(detail_summary.trend_1h.rx_bytes), "1h↑", format_byte_value(detail_summary.trend_1h.tx_bytes)),
-                ("样本", str(detail_summary.trend_1h.sample_count), None, None),
+                f"CPU {html_code(format_avg_peak_values(detail_summary.trend_1h.avg_cpu_percent, detail_summary.trend_1h.peak_cpu_percent))}",
+                f"内存 {html_code(format_avg_peak_values(detail_summary.trend_1h.avg_memory_percent, detail_summary.trend_1h.peak_memory_percent))}",
+                f"磁盘 {html_code(format_avg_peak_values(detail_summary.trend_1h.avg_disk_percent, detail_summary.trend_1h.peak_disk_percent))}",
+                f"流量 ↓ {html_code(format_byte_value(detail_summary.trend_1h.rx_bytes))} · ↑ {html_code(format_byte_value(detail_summary.trend_1h.tx_bytes))}",
+                f"样本 {html_code(str(detail_summary.trend_1h.sample_count))}",
             ],
         ),
-        "",
-        *render_metric_block(
-            "流量套餐",
-            quota_lines,
-        ),
+        html_card("流量套餐", render_quota_detail_html(quota_status)),
     ]
-    return "\n".join(lines), build_node_detail_keyboard(node.name)
+    return title + "\n" + "\n\n".join(cards), build_node_detail_keyboard(node.name)
 
 
 async def render_node_delete_confirm(node_name: str) -> tuple[str, InlineKeyboardMarkup]:
@@ -891,19 +848,21 @@ async def render_node_delete_confirm(node_name: str) -> tuple[str, InlineKeyboar
         node = await get_node_by_name(session, node_name)
     if node is None:
         return "未找到对应节点。", build_single_action_keyboard(CALLBACK_SHOW_NODES)
-    lines = [
-        f"🗑️ 删除节点 | {node.name}",
-        "",
-        "此操作会删除该节点及其关联数据：",
-        "• 历史指标快照",
-        "• 告警记录",
-        "• 流量套餐配置",
-        "",
-        "删除后，如果该机器上的 Agent 仍在运行，会因令牌失效而上报失败。",
-        "",
-        "确认删除吗？",
-    ]
-    return "\n".join(lines), build_node_delete_confirm_keyboard(node.name)
+    text = (
+        f"<b>🗑️ 删除节点 · {html.escape(node.name)}</b>\n"
+        + html_card(
+            "影响范围",
+            [
+                "• 历史指标快照",
+                "• 告警记录",
+                "• 流量套餐配置",
+                "",
+                "Agent 令牌将立即失效，仍在运行的 Agent 会上报失败。",
+                "⚠️ 确认删除吗？",
+            ],
+        )
+    )
+    return text, build_node_delete_confirm_keyboard(node.name)
 
 
 async def render_traffic_response() -> tuple[str, InlineKeyboardMarkup]:
@@ -924,22 +883,24 @@ async def render_quota_response(node_name: str) -> str:
         if node is None:
             raise QuotaServiceError("未找到对应节点。")
         status = await get_quota_status(session, node)
-    return "\n".join([f"🧾 套餐状态 | {node_name}", "", *render_metric_block("套餐", format_quota_compact_lines(status))])
+    return f"<b>🧾 套餐状态 · {html.escape(node_name)}</b>\n{html_card('流量套餐', render_quota_detail_html(status))}"
 
 
 async def render_daily_schedule_response() -> str:
     async with SessionLocal() as session:
         schedule = await get_daily_report_schedule(session)
-    return "\n".join(
-        [
-            "🕘 流量日报推送时间",
-            "",
-            f"时区  {schedule.timezone}",
-            f"时间  每天 {schedule.clock_text}",
-            "",
-            "用法：/daily_time HH:MM",
-            "示例：/daily_time 08:30",
-        ]
+    return (
+        "<b>🕘 流量日报推送时间</b>\n"
+        + html_card(
+            "当前设置",
+            [
+                f"时区 {html_code(schedule.timezone)}",
+                f"时间 每天 {html_code(schedule.clock_text)}",
+                "",
+                f"修改 {html_code('/daily_time HH:MM')}",
+                f"示例 {html_code('/daily_time 08:30')}",
+            ],
+        )
     )
 
 
@@ -954,7 +915,7 @@ async def render_dns_home() -> tuple[str, InlineKeyboardMarkup | None]:
         service = get_dns_service()
         return render_dns_home_text(service), build_dns_home_keyboard(service)
     except (CloudflareServiceError, ValueError) as exc:
-        return f"☁️ DNS 管理\n\n{exc}", build_single_action_keyboard(CALLBACK_SHOW_MENU)
+        return html_error("☁️ DNS 管理", exc), build_single_action_keyboard(CALLBACK_SHOW_MENU)
 
 
 async def render_dns_zone(zone_key: str) -> tuple[str, InlineKeyboardMarkup]:
@@ -989,7 +950,7 @@ async def prompt_dns_name(message_or_callback: Message | CallbackQuery, draft: D
     if isinstance(message_or_callback, CallbackQuery):
         await safe_edit_callback_message(message_or_callback, text, keyboard)
     else:
-        await message_or_callback.answer(render_panel(text), parse_mode="HTML", reply_markup=keyboard)
+        await message_or_callback.answer(text, parse_mode="HTML", reply_markup=keyboard)
 
 
 async def prompt_dns_content(target: Message | CallbackQuery, draft: DnsDraft) -> None:
@@ -1004,40 +965,32 @@ async def prompt_dns_content(target: Message | CallbackQuery, draft: DnsDraft) -
     if isinstance(target, CallbackQuery):
         await safe_edit_callback_message(target, text, keyboard)
     else:
-        await target.answer(render_panel(text), parse_mode="HTML", reply_markup=keyboard)
+        await target.answer(text, parse_mode="HTML", reply_markup=keyboard)
 
 
 async def prompt_dns_ttl(target: Message | CallbackQuery, draft: DnsDraft) -> None:
-    text = "\n".join(
-        [
-            "☁️ DNS 流程 | 选择 TTL",
-            "",
-            f"当前选择 {format_dns_ttl(draft.ttl)}",
-        ]
+    text = "<b>☁️ DNS 流程 · 选择 TTL</b>\n" + html_card(
+        "当前选择", [html_code(format_dns_ttl(draft.ttl))]
     )
     keyboard = build_dns_ttl_keyboard(current_ttl=draft.ttl, allow_keep=draft.mode == "update")
     if isinstance(target, CallbackQuery):
         await safe_edit_callback_message(target, text, keyboard)
     else:
-        await target.answer(render_panel(text), parse_mode="HTML", reply_markup=keyboard)
+        await target.answer(text, parse_mode="HTML", reply_markup=keyboard)
 
 
 async def prompt_dns_proxied(target: Message | CallbackQuery, draft: DnsDraft) -> None:
     if draft.record_type not in {"A", "AAAA", "CNAME"}:
         await present_dns_preview(target, draft)
         return
-    text = "\n".join(
-        [
-            "☁️ DNS 流程 | 选择代理模式",
-            "",
-            f"当前选择 {format_dns_proxied(draft.proxied)}",
-        ]
+    text = "<b>☁️ DNS 流程 · 选择代理模式</b>\n" + html_card(
+        "当前选择", [html_code(format_dns_proxied(draft.proxied))]
     )
     keyboard = build_dns_proxied_keyboard(current_value=draft.proxied, allow_keep=draft.mode == "update")
     if isinstance(target, CallbackQuery):
         await safe_edit_callback_message(target, text, keyboard)
     else:
-        await target.answer(render_panel(text), parse_mode="HTML", reply_markup=keyboard)
+        await target.answer(text, parse_mode="HTML", reply_markup=keyboard)
 
 
 async def present_dns_preview(target: Message | CallbackQuery, draft: DnsDraft) -> None:
@@ -1048,7 +1001,7 @@ async def present_dns_preview(target: Message | CallbackQuery, draft: DnsDraft) 
     if isinstance(target, CallbackQuery):
         await safe_edit_callback_message(target, text, keyboard)
     else:
-        await target.answer(render_panel(text), parse_mode="HTML", reply_markup=keyboard)
+        await target.answer(text, parse_mode="HTML", reply_markup=keyboard)
 
 
 def require_dns_session(user_id: int) -> DnsSession:
@@ -1093,13 +1046,11 @@ async def enroll_handler(message: Message, command: CommandObject) -> None:
         "python -m proxypulse.agent"
     )
     await message.answer(
-        f"🔐 接入令牌\n"
-        f"节点：{node.name}\n\n"
-        f"令牌：\n"
-        f"`{node.enrollment_token}`\n\n"
-        "🚀 Agent 启动示例：\n"
-        f"`{agent_command}`",
-        parse_mode="Markdown",
+        f"<b>🔐 节点接入 · {html.escape(node.name)}</b>\n"
+        + html_card("接入令牌", [html_code(node.enrollment_token)])
+        + "\n\n"
+        + html_card("Agent 启动命令", [html_code(agent_command)]),
+        parse_mode="HTML",
     )
 
 
@@ -1121,7 +1072,7 @@ async def node_handler(message: Message, command: CommandObject) -> None:
         return
 
     text, keyboard = await render_node_detail(node_name)
-    await message.answer(render_panel(text), parse_mode="HTML", reply_markup=keyboard)
+    await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
 
 
 @router.message(Command("delete_node"))
@@ -1133,7 +1084,7 @@ async def delete_node_handler(message: Message, command: CommandObject) -> None:
         await message.answer("用法：/delete_node <节点名>")
         return
     text, keyboard = await render_node_delete_confirm(node_name)
-    await message.answer(render_panel(text), parse_mode="HTML", reply_markup=keyboard)
+    await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
 
 
 @router.message(Command("traffic"))
@@ -1141,7 +1092,7 @@ async def traffic_handler(message: Message) -> None:
     if await reject_if_not_admin(message):
         return
     text, keyboard = await render_traffic_response()
-    await message.answer(render_panel(text), parse_mode="HTML", reply_markup=keyboard)
+    await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
 
 
 @router.message(Command("traffic_diag"))
@@ -1157,7 +1108,7 @@ async def traffic_diag_handler(message: Message, command: CommandObject) -> None
     except TrafficDiagnosisError as exc:
         await message.answer(str(exc))
         return
-    await message.answer(render_panel(text), parse_mode="HTML")
+    await message.answer(text, parse_mode="HTML")
 
 
 @router.message(Command("daily"))
@@ -1165,7 +1116,7 @@ async def daily_handler(message: Message) -> None:
     if await reject_if_not_admin(message):
         return
     text, keyboard = await render_daily_response()
-    await message.answer(render_panel(text), parse_mode="HTML", reply_markup=keyboard)
+    await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
 
 
 @router.message(Command("daily_time"))
@@ -1174,7 +1125,7 @@ async def daily_time_handler(message: Message, command: CommandObject) -> None:
         return
     clock_text = (command.args or "").strip()
     if not clock_text:
-        await message.answer(render_panel(await render_daily_schedule_response()), parse_mode="HTML")
+        await message.answer(await render_daily_schedule_response(), parse_mode="HTML")
         return
 
     try:
@@ -1186,15 +1137,10 @@ async def daily_time_handler(message: Message, command: CommandObject) -> None:
         return
 
     await message.answer(
-        render_panel(
-            "\n".join(
-                [
-                    "✅ 已更新流量日报推送时间",
-                    "",
-                    f"时区  {schedule.timezone}",
-                    f"时间  每天 {schedule.clock_text}",
-                ]
-            )
+        "<b>✅ 已更新流量日报推送时间</b>\n"
+        + html_card(
+            "当前设置",
+            [f"时区 {html_code(schedule.timezone)}", f"时间 每天 {html_code(schedule.clock_text)}"],
         ),
         parse_mode="HTML",
     )
@@ -1206,10 +1152,10 @@ async def quota_handler(message: Message, command: CommandObject) -> None:
         return
     node_name = (command.args or "").strip()
     if not node_name:
-        await message.answer(render_panel("\n".join(render_quota_help_lines())), parse_mode="HTML")
+        await message.answer("\n\n".join(render_quota_help_lines()), parse_mode="HTML")
         return
     try:
-        await message.answer(render_panel(await render_quota_response(node_name)), parse_mode="HTML")
+        await message.answer(await render_quota_response(node_name), parse_mode="HTML")
     except QuotaServiceError as exc:
         await message.answer(str(exc))
 
@@ -1243,7 +1189,11 @@ async def quota_monthly_handler(message: Message, command: CommandObject) -> Non
     except (ValueError, QuotaServiceError) as exc:
         await message.answer(str(exc))
         return
-    await message.answer("\n".join([f"✅ 已设置每月流量套餐：{node_name}", *format_quota_status(status)]))
+    await message.answer(
+        f"<b>✅ 已设置每月流量套餐 · {html.escape(node_name)}</b>\n"
+        + html_card("当前套餐", render_quota_detail_html(status)),
+        parse_mode="HTML",
+    )
 
 
 @router.message(Command("quota_interval"))
@@ -1274,7 +1224,11 @@ async def quota_interval_handler(message: Message, command: CommandObject) -> No
     except (ValueError, QuotaServiceError) as exc:
         await message.answer(str(exc))
         return
-    await message.answer("\n".join([f"✅ 已设置按天循环套餐：{node_name}", *format_quota_status(status)]))
+    await message.answer(
+        f"<b>✅ 已设置按天循环套餐 · {html.escape(node_name)}</b>\n"
+        + html_card("当前套餐", render_quota_detail_html(status)),
+        parse_mode="HTML",
+    )
 
 
 @router.message(Command("quota_calibrate"))
@@ -1297,7 +1251,11 @@ async def quota_calibrate_handler(message: Message, command: CommandObject) -> N
     except QuotaServiceError as exc:
         await message.answer(str(exc))
         return
-    await message.answer("\n".join([f"✅ 已校准已用流量：{node_name}", *format_quota_status(status)]))
+    await message.answer(
+        f"<b>✅ 已校准已用流量 · {html.escape(node_name)}</b>\n"
+        + html_card("当前套餐", render_quota_detail_html(status)),
+        parse_mode="HTML",
+    )
 
 
 @router.message(Command("quota_clear"))
@@ -1317,7 +1275,7 @@ async def quota_clear_handler(message: Message, command: CommandObject) -> None:
     except QuotaServiceError as exc:
         await message.answer(str(exc))
         return
-    await message.answer(f"✅ 已清除流量套餐配置：{node_name}")
+    await message.answer(f"<b>✅ 已清除流量套餐配置</b>\n节点 {html_code(node_name)}", parse_mode="HTML")
 
 
 @router.message(Command("dns"))
@@ -1329,7 +1287,7 @@ async def dns_handler(message: Message) -> None:
         return
     reset_dns_session(message.from_user.id)
     text, keyboard = await render_dns_home()
-    await message.answer(render_panel(text), parse_mode="HTML", reply_markup=keyboard)
+    await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
 
 
 @router.message(Command("dns_zones"))
@@ -1342,10 +1300,8 @@ async def dns_zones_handler(message: Message) -> None:
     except (CloudflareServiceError, ValueError) as exc:
         await message.answer(str(exc))
         return
-    lines = ["☁️ DNS Zones", ""]
-    for zone in zones:
-        lines.append(f"• {zone.key} -> {zone.zone_name}")
-    await message.answer(render_panel("\n".join(lines)), parse_mode="HTML")
+    lines = [f"{html_code(zone.key)} → {html.escape(zone.zone_name)}" for zone in zones]
+    await message.answer(f"<b>☁️ DNS Zones</b>\n{html_card('已配置', lines)}", parse_mode="HTML")
 
 
 @router.message(F.text)
@@ -1384,7 +1340,7 @@ async def show_nodes_callback(callback: CallbackQuery) -> None:
         await callback.answer("无权访问。", show_alert=True)
         return
     text, keyboard = await render_nodes_response()
-    await safe_edit_callback_message(callback, text, keyboard, rich_html=True)
+    await safe_edit_callback_message(callback, text, keyboard)
 
 
 @router.callback_query(F.data == CALLBACK_SHOW_TRAFFIC)
@@ -1430,7 +1386,7 @@ async def dns_zone_callback(callback: CallbackQuery) -> None:
     try:
         text, keyboard = await render_dns_zone(zone_key)
     except (CloudflareServiceError, ValueError) as exc:
-        await safe_edit_callback_message(callback, f"☁️ DNS 管理\n\n{exc}", build_single_action_keyboard(CALLBACK_DNS_HOME))
+        await safe_edit_callback_message(callback, html_error("☁️ DNS 管理", exc), build_single_action_keyboard(CALLBACK_DNS_HOME))
         return
     await safe_edit_callback_message(callback, text, keyboard)
 
@@ -1449,7 +1405,7 @@ async def dns_list_callback(callback: CallbackQuery) -> None:
         session.pending_action = None
         text, keyboard = await render_dns_record_list(zone_key, page=page)
     except (CloudflareServiceError, ValueError) as exc:
-        await safe_edit_callback_message(callback, f"☁️ DNS 管理\n\n{exc}", build_single_action_keyboard(CALLBACK_DNS_HOME))
+        await safe_edit_callback_message(callback, html_error("☁️ DNS 管理", exc), build_single_action_keyboard(CALLBACK_DNS_HOME))
         return
     await safe_edit_callback_message(callback, text, keyboard)
 
@@ -1468,7 +1424,7 @@ async def dns_record_callback(callback: CallbackQuery) -> None:
         session.pending_action = None
         text, keyboard = await render_dns_record_detail(zone_key, record_id)
     except (CloudflareServiceError, ValueError) as exc:
-        await safe_edit_callback_message(callback, f"☁️ DNS 管理\n\n{exc}", build_single_action_keyboard(CALLBACK_DNS_HOME))
+        await safe_edit_callback_message(callback, html_error("☁️ DNS 管理", exc), build_single_action_keyboard(CALLBACK_DNS_HOME))
         return
     await safe_edit_callback_message(callback, text, keyboard)
 
@@ -1487,9 +1443,11 @@ async def dns_create_callback(callback: CallbackQuery) -> None:
         service = get_dns_service()
         zone = service.get_zone(zone_key)
     except (CloudflareServiceError, ValueError) as exc:
-        await safe_edit_callback_message(callback, f"☁️ DNS 管理\n\n{exc}", build_single_action_keyboard(CALLBACK_DNS_HOME))
+        await safe_edit_callback_message(callback, html_error("☁️ DNS 管理", exc), build_single_action_keyboard(CALLBACK_DNS_HOME))
         return
-    text = "\n".join([f"☁️ DNS 新增 | {zone.zone_name}", "", "先选择记录类型。"])
+    text = f"<b>☁️ DNS 新增 · {html.escape(zone.zone_name)}</b>\n" + html_card(
+        "记录类型", ["先选择要新增的记录类型。"]
+    )
     await safe_edit_callback_message(callback, text, build_dns_type_keyboard(zone_key))
 
 
@@ -1536,7 +1494,7 @@ async def dns_update_callback(callback: CallbackQuery) -> None:
         )
         session.pending_action = None
     except (CloudflareServiceError, ValueError) as exc:
-        await safe_edit_callback_message(callback, f"☁️ DNS 管理\n\n{exc}", build_single_action_keyboard(CALLBACK_DNS_HOME))
+        await safe_edit_callback_message(callback, html_error("☁️ DNS 管理", exc), build_single_action_keyboard(CALLBACK_DNS_HOME))
         return
     await prompt_dns_name(callback, session.draft)
 
@@ -1558,7 +1516,7 @@ async def dns_delete_callback(callback: CallbackQuery) -> None:
         session.pending_action = DnsPendingAction(action="delete", zone_key=zone_key, record_id=record_id)
         await safe_edit_callback_message(callback, render_dns_delete_preview(record, zone.zone_name), build_dns_confirm_keyboard("delete"))
     except (CloudflareServiceError, ValueError) as exc:
-        await safe_edit_callback_message(callback, f"☁️ DNS 管理\n\n{exc}", build_single_action_keyboard(CALLBACK_DNS_HOME))
+        await safe_edit_callback_message(callback, html_error("☁️ DNS 管理", exc), build_single_action_keyboard(CALLBACK_DNS_HOME))
 
 
 @router.callback_query(F.data.startswith(CALLBACK_DNS_KEEP_PREFIX))
@@ -1593,7 +1551,7 @@ async def dns_keep_value_callback(callback: CallbackQuery) -> None:
             return
         raise CloudflareServiceError("无法保留当前字段。")
     except (CloudflareServiceError, ValueError) as exc:
-        await safe_edit_callback_message(callback, f"☁️ DNS 管理\n\n{exc}", build_single_action_keyboard(CALLBACK_DNS_HOME))
+        await safe_edit_callback_message(callback, html_error("☁️ DNS 管理", exc), build_single_action_keyboard(CALLBACK_DNS_HOME))
 
 
 @router.callback_query(F.data.startswith(CALLBACK_DNS_TTL_PREFIX))
@@ -1609,7 +1567,7 @@ async def dns_ttl_callback(callback: CallbackQuery) -> None:
         session.draft.ttl = ttl
         await prompt_dns_proxied(callback, session.draft)
     except (CloudflareServiceError, ValueError) as exc:
-        await safe_edit_callback_message(callback, f"☁️ DNS 管理\n\n{exc}", build_single_action_keyboard(CALLBACK_DNS_HOME))
+        await safe_edit_callback_message(callback, html_error("☁️ DNS 管理", exc), build_single_action_keyboard(CALLBACK_DNS_HOME))
 
 
 @router.callback_query(F.data.startswith(CALLBACK_DNS_PROXIED_PREFIX))
@@ -1625,7 +1583,7 @@ async def dns_proxied_callback(callback: CallbackQuery) -> None:
         session.draft.proxied = value == "1"
         await present_dns_preview(callback, session.draft)
     except (CloudflareServiceError, ValueError) as exc:
-        await safe_edit_callback_message(callback, f"☁️ DNS 管理\n\n{exc}", build_single_action_keyboard(CALLBACK_DNS_HOME))
+        await safe_edit_callback_message(callback, html_error("☁️ DNS 管理", exc), build_single_action_keyboard(CALLBACK_DNS_HOME))
 
 
 @router.callback_query(F.data.startswith(CALLBACK_DNS_CONFIRM_PREFIX))
@@ -1687,7 +1645,7 @@ async def dns_confirm_callback(callback: CallbackQuery) -> None:
             return
         raise CloudflareServiceError("未知的确认操作。")
     except (CloudflareServiceError, ValueError) as exc:
-        await safe_edit_callback_message(callback, f"☁️ DNS 管理\n\n{exc}", build_single_action_keyboard(CALLBACK_DNS_HOME))
+        await safe_edit_callback_message(callback, html_error("☁️ DNS 管理", exc), build_single_action_keyboard(CALLBACK_DNS_HOME))
 
 
 @router.callback_query(F.data == CALLBACK_DNS_CANCEL)
@@ -1706,7 +1664,7 @@ async def dns_cancel_callback(callback: CallbackQuery) -> None:
         session.draft = None
         session.pending_action = None
     except (CloudflareServiceError, ValueError) as exc:
-        text = f"☁️ DNS 管理\n\n{exc}"
+        text = html_error("☁️ DNS 管理", exc)
         keyboard = build_single_action_keyboard(CALLBACK_DNS_HOME)
     await safe_edit_callback_message(callback, text, keyboard)
 
@@ -1741,12 +1699,12 @@ async def delete_node_confirm_callback(callback: CallbackQuery) -> None:
         async with SessionLocal() as session:
             node = await delete_node_by_name(session, node_name)
     except NodeServiceError as exc:
-        await safe_edit_callback_message(callback, str(exc), build_single_action_keyboard(CALLBACK_SHOW_NODES))
+        await safe_edit_callback_message(callback, html_error("节点操作", exc), build_single_action_keyboard(CALLBACK_SHOW_NODES))
         return
     text, keyboard = await render_nodes_response()
     if callback.message is not None:
         await callback.message.answer(f"✅ 已删除节点：{node.name}")
-    await safe_edit_callback_message(callback, text, keyboard, rich_html=True)
+    await safe_edit_callback_message(callback, text, keyboard)
 
 
 @router.callback_query(F.data.startswith(CALLBACK_NODE_DELETE_CANCEL_PREFIX))
@@ -1773,7 +1731,7 @@ async def maybe_send_daily_report(bot: Bot) -> None:
 
         text = format_traffic_summary(summary)
         for admin_id in settings.admin_telegram_ids:
-            await bot.send_message(admin_id, text)
+            await bot.send_message(admin_id, text, parse_mode="HTML")
         mark_daily_report_run(session, report_day)
         await session.commit()
 
@@ -1788,7 +1746,7 @@ async def alert_loop(bot: Bot) -> None:
                 for alert, node in pending:
                     text = format_alert_message(alert, node)
                     for admin_id in settings.admin_telegram_ids:
-                        await bot.send_message(admin_id, text)
+                        await bot.send_message(admin_id, text, parse_mode="HTML")
                     mark_notified(alert)
                 await session.commit()
             await maybe_send_daily_report(bot)

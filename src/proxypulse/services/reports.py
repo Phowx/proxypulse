@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
@@ -226,45 +227,40 @@ async def summarize_previous_local_day(session: AsyncSession, today_local: date 
 
 
 def format_traffic_summary(summary: TrafficSummary) -> str:
+    start_text = summary.start_at.astimezone(_local_tz()).strftime("%Y-%m-%d %H:%M")
+    end_text = summary.end_at.astimezone(_local_tz()).strftime("%Y-%m-%d %H:%M")
     lines = [
-        f"📈 {summary.title}",
-        "",
-        "── 总览",
-        (
-            f"时间窗口  {summary.start_at.astimezone(_local_tz()).strftime('%Y-%m-%d %H:%M')}"
-            f" → {summary.end_at.astimezone(_local_tz()).strftime('%Y-%m-%d %H:%M')}"
-        ),
-        f"下行总量  {format_bytes(summary.total_rx_bytes)}",
-        f"上行总量  {format_bytes(summary.total_tx_bytes)}",
-        f"合计流量  {format_bytes(summary.total_bytes)}",
+        f"<b>📈 {html.escape(summary.title)}</b>",
+        "<blockquote><b>总览</b>",
+        f"时间 <code>{start_text}</code> → <code>{end_text}</code>",
+        f"下行 <code>{format_bytes(summary.total_rx_bytes)}</code> · 上行 <code>{format_bytes(summary.total_tx_bytes)}</code>",
+        f"合计 <code>{format_bytes(summary.total_bytes)}</code></blockquote>",
     ]
     if not summary.node_summaries:
-        lines.append("")
-        lines.append("该时间段内暂无可用流量样本。")
+        lines.append("\n<blockquote>该时间段内暂无可用流量样本。</blockquote>")
         return "\n".join(lines)
 
-    lines.extend(["", "── 节点明细"])
+    lines.extend(["", "<b>节点明细</b>"])
     for item in summary.node_summaries:
         item_lines = [
-            "━━━━━━━━━━",
-            f"🖥️ {item.node_name}",
-            f"下行  {format_bytes(item.rx_bytes)}",
-            f"上行  {format_bytes(item.tx_bytes)}",
-            f"合计  {format_bytes(item.total_bytes)}",
+            f"<blockquote><b>🖥️ {html.escape(item.node_name)}</b>",
+            f"下行 <code>{format_bytes(item.rx_bytes)}</code> · 上行 <code>{format_bytes(item.tx_bytes)}</code>",
+            f"合计 <code>{format_bytes(item.total_bytes)}</code>",
         ]
         if item.month_used_bytes is not None:
-            item_lines.append(f"本月累计  {format_bytes(item.month_used_bytes)}")
+            item_lines.append(f"本月累计 <code>{format_bytes(item.month_used_bytes)}</code>")
             item_lines.append(
-                f"套餐可用  {format_bytes(item.available_bytes)}"
+                f"套餐可用 <code>{format_bytes(item.available_bytes)}</code>"
                 if item.available_bytes is not None
-                else "套餐可用  未配置"
+                else "套餐可用 <code>未配置</code>"
             )
             if item.days_until_reset is not None:
                 item_lines.append(
-                    "距重置  今天"
+                    "重置 <code>今天</code>"
                     if item.days_until_reset == 0
-                    else f"距重置  {item.days_until_reset} 天"
+                    else f"重置 <code>{item.days_until_reset} 天后</code>"
                 )
+        item_lines[-1] += "</blockquote>"
         lines.append("\n".join(item_lines))
     return "\n".join(lines)
 

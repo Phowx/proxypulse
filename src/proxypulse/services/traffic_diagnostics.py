@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -176,23 +177,20 @@ async def build_traffic_diagnosis(
 def format_traffic_diagnosis(diagnosis: TrafficDiagnosis) -> str:
     node = diagnosis.node
     lines = [
-        f"🧪 流量诊断 | {node.name}",
+        f"<b>🧪 流量诊断 · {html.escape(node.name)}</b>",
+        "<blockquote><b>当前口径</b>",
+        f"状态 <code>{html.escape(node.status.value)}</code>",
+        f"当前网卡 <code>{html.escape(_format_interface(diagnosis.current_interface))}</code>",
+        "最近出现 <code>"
+        + html.escape(", ".join(_format_interface(item) for item in diagnosis.interfaces_seen) if diagnosis.interfaces_seen else "暂无")
+        + "</code>",
+        f"累计 ↓ <code>{format_bytes(node.latest_rx_bytes or 0)}</code> · ↑ <code>{format_bytes(node.latest_tx_bytes or 0)}</code>",
+        f"合计 <code>{format_bytes(diagnosis.current_total_bytes)}</code></blockquote>",
         "",
-        "── 当前口径",
-        f"状态 {node.status.value}",
-        f"当前网卡 {_format_interface(diagnosis.current_interface)}",
-        f"最近出现 {', '.join(_format_interface(item) for item in diagnosis.interfaces_seen) if diagnosis.interfaces_seen else '暂无'}",
-        f"最新累计↓ {format_bytes(node.latest_rx_bytes or 0)}",
-        f"最新累计↑ {format_bytes(node.latest_tx_bytes or 0)}",
-        f"最新合计 {format_bytes(diagnosis.current_total_bytes)}",
-        "",
-        "── 24h 统计依据",
-        f"样本数 {diagnosis.snapshot_count_24h}",
-        f"24h↓ {format_bytes(diagnosis.traffic_24h_rx_bytes)}",
-        f"24h↑ {format_bytes(diagnosis.traffic_24h_tx_bytes)}",
-        f"24h合计 {format_bytes(diagnosis.traffic_24h_total_bytes)}",
-        "",
-        "── 诊断提示",
+        "<blockquote><b>24h 统计依据</b>",
+        f"样本 <code>{diagnosis.snapshot_count_24h}</code>",
+        f"下行 <code>{format_bytes(diagnosis.traffic_24h_rx_bytes)}</code> · 上行 <code>{format_bytes(diagnosis.traffic_24h_tx_bytes)}</code>",
+        f"合计 <code>{format_bytes(diagnosis.traffic_24h_total_bytes)}</code></blockquote>",
     ]
 
     hints: list[str] = []
@@ -202,25 +200,30 @@ def format_traffic_diagnosis(diagnosis: TrafficDiagnosis) -> str:
         hints.append("最近快照出现了多张网卡，说明统计口径可能切换过，和服务商面板更容易不一致。")
     hints.append("ProxyPulse 统计口径是 RX+TX 合计；部分服务商面板只统计公网主网卡或计费流量。")
 
+    lines.extend(["", "<blockquote><b>诊断提示</b>"])
     for hint in hints:
-        lines.append(f"• {hint}")
+        lines.append(f"• {html.escape(hint)}")
+    lines[-1] += "</blockquote>"
 
-    lines.extend(["", "── 最近快照"])
+    lines.extend(["", "<b>最近快照</b>"])
     if not diagnosis.recent_samples:
-        lines.append("暂无历史快照。")
+        lines.append("<blockquote>暂无历史快照。</blockquote>")
         return "\n".join(lines)
 
+    sample_lines: list[str] = []
     for index, sample in enumerate(diagnosis.recent_samples):
-        lines.append(
-            f"{sample.created_at.astimezone(UTC).strftime('%m-%d %H:%M:%S')}  {_format_interface(sample.network_interface)}"
+        sample_lines.append(
+            f"<b>{sample.created_at.astimezone(UTC).strftime('%m-%d %H:%M:%S')}</b>"
+            f" · <code>{html.escape(_format_interface(sample.network_interface))}</code>"
         )
-        lines.append(f"累计↓ {format_bytes(sample.rx_bytes)}  累计↑ {format_bytes(sample.tx_bytes)}")
+        sample_lines.append(f"累计 ↓ <code>{format_bytes(sample.rx_bytes)}</code> · ↑ <code>{format_bytes(sample.tx_bytes)}</code>")
         if index == 0 or sample.rx_delta is None or sample.tx_delta is None or sample.elapsed_seconds is None:
-            lines.append("Δ --")
+            sample_lines.append("变化 <code>--</code>")
         else:
-            lines.append(
-                f"Δ {int(sample.elapsed_seconds)}s  ↓ {format_bytes(sample.rx_delta)}  ↑ {format_bytes(sample.tx_delta)}"
+            sample_lines.append(
+                f"变化 <code>{int(sample.elapsed_seconds)}s</code> · ↓ <code>{format_bytes(sample.rx_delta)}</code> · ↑ <code>{format_bytes(sample.tx_delta)}</code>"
             )
         if index != len(diagnosis.recent_samples) - 1:
-            lines.append("")
+            sample_lines.append("")
+    lines.append("<blockquote expandable>" + "\n".join(sample_lines) + "</blockquote>")
     return "\n".join(lines)

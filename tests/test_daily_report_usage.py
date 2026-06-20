@@ -68,6 +68,8 @@ class DailyReportUsageTests(IsolatedAsyncioTestCase):
         self.assertEqual(item.days_until_reset, 20)
 
         rendered = format_traffic_summary(summary)
-        self.assertIn("本月累计  2.4 KB", rendered)
-        self.assertIn("套餐可用  7.3 KB", rendered)
-        self.assertIn("距重置  20 天", rendered)
+        self.assertIn("<blockquote><b>总览</b>", rendered)
+        self.assertIn("本月累计 <code>2.4 KB</code>", rendered)
+        self.assertIn("套餐可用 <code>7.3 KB</code>", rendered)
+        self.assertIn("重置 <code>20 天后</code>", rendered)
+        self.assertNotIn("<pre>", rendered)

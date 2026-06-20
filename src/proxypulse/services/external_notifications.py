@@ -33,19 +33,21 @@ def _format_observed_at(value: datetime | None) -> str:
 def format_external_network_identity_message(payload: ExternalNetworkIdentityRequest) -> str:
     lines = [
         "📡 <b>外部网络通知</b>",
-        f"时间：{escape(_format_observed_at(payload.observed_at))}",
+        "<blockquote><b>网络信息</b>",
+        f"时间 <code>{escape(_format_observed_at(payload.observed_at))}</code>",
     ]
     if payload.location:
-        lines.append(f"位置：{escape(payload.location)}")
+        lines.append(f"位置 {escape(payload.location)}")
     if payload.ipv4:
-        lines.append(f"IPv4：<code>{escape(payload.ipv4)}</code>")
+        lines.append(f"IPv4 <code>{escape(payload.ipv4)}</code>")
     if payload.ipv6:
-        lines.append(f"IPv6：<code>{escape(payload.ipv6)}</code>")
+        lines.append(f"IPv6 <code>{escape(payload.ipv6)}</code>")
     if payload.domains:
         domain_list = ", ".join(payload.domains)
-        lines.append(f"域名：<code>{escape(domain_list)}</code>")
+        lines.append(f"域名 <code>{escape(domain_list)}</code>")
     if payload.notes:
-        lines.append(f"备注：{escape(payload.notes)}")
+        lines.append(f"备注 {escape(payload.notes)}")
+    lines[-1] += "</blockquote>"
     return "\n".join(lines)
 
 

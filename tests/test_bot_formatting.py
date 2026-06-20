@@ -11,6 +11,7 @@ from proxypulse.bot.main import (
     build_node_detail_keyboard,
     build_node_list_keyboard,
     dashboard_button_rows,
+    render_dns_record_text,
     render_node_card,
     render_overview_quota_html,
 )
@@ -23,7 +24,27 @@ class BotFormattingTests(TestCase):
         rendered = build_dashboard_menu_text()
 
         self.assertIn("ProxyPulse 控制台", rendered)
+        self.assertIn("<blockquote>", rendered)
+        self.assertNotIn("<pre>", rendered)
         self.assertNotIn("快捷入口", rendered)
+
+    def test_dns_record_uses_native_card_and_escapes_dynamic_values(self) -> None:
+        record = SimpleNamespace(
+            name="api<prod>",
+            type="A",
+            content="1.2.3.4&backup",
+            ttl=300,
+            proxied=True,
+            comment='owner="ops"',
+        )
+
+        rendered = render_dns_record_text(record, "example.com")
+
+        self.assertIn("<blockquote>", rendered)
+        self.assertNotIn("<pre>", rendered)
+        self.assertIn("api&lt;prod&gt;", rendered)
+        self.assertIn("1.2.3.4&amp;backup", rendered)
+        self.assertIn("owner=&quot;ops&quot;", rendered)
 
     def test_dashboard_button_rows_use_single_row(self) -> None:
         rows = dashboard_button_rows()

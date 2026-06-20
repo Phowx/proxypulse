@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import logging
 from datetime import UTC, datetime, timedelta
 
@@ -262,8 +263,8 @@ def format_alert_message(alert: AlertEvent, node: Node) -> str:
     prefix_icon = "🚨" if alert.status == AlertStatus.active else "✅"
     severity_icon = "⛔" if alert.severity == "critical" else "⚠️"
     return (
-        f"{prefix_icon} {prefix}\n"
-        f"节点：{node.name}\n"
-        f"内容：{alert.summary}\n"
-        f"级别：{severity_icon} {severity}"
+        f"<b>{prefix_icon} {prefix} · {html.escape(node.name)}</b>\n"
+        "<blockquote><b>告警信息</b>\n"
+        f"内容 {html.escape(alert.summary)}\n"
+        f"级别 {severity_icon} <code>{severity}</code></blockquote>"
     )
