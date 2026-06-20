@@ -6,7 +6,6 @@ import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Literal
-from unicodedata import east_asian_width
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot, Dispatcher, F, Router
@@ -597,6 +596,10 @@ def format_avg_peak(avg_value: float | None, peak_value: float | None) -> str:
     return f"均值 {format_metric_value(avg_value)} | 峰值 {format_metric_value(peak_value)}"
 
 
+def format_avg_peak_values(avg_value: float | None, peak_value: float | None) -> str:
+    return f"{format_metric_value(avg_value)} / {format_metric_value(peak_value)}"
+
+
 def format_resource_usage(used_bytes: int | None, total_bytes: int | None, percent: float | None) -> str:
     if used_bytes is not None and total_bytes is not None:
         return f"{format_byte_value(used_bytes)} / {format_byte_value(total_bytes)} ({format_metric_value(percent)})"
@@ -635,43 +638,34 @@ def render_metric_block(title: str, rows: list[tuple[str, str, str | None, str |
     return rendered
 
 
-def display_width(value: str) -> int:
-    return sum(2 if east_asian_width(character) in {"W", "F"} else 1 for character in value)
+def html_code(value: str) -> str:
+    return f"<code>{html.escape(value)}</code>"
 
 
-def pad_display(value: str, width: int, *, right: bool = False) -> str:
-    padding = " " * max(width - display_width(value), 0)
-    return f"{padding}{value}" if right else f"{value}{padding}"
-
-
-def render_aligned_table(headers: tuple[str, ...], rows: list[tuple[str, ...]]) -> list[str]:
-    all_rows = [headers, *rows]
-    widths = [max(display_width(row[index]) for row in all_rows) for index in range(len(headers))]
-
-    def render_row(row: tuple[str, ...]) -> str:
-        return "  ".join(
-            pad_display(value, widths[index], right=index > 0)
-            for index, value in enumerate(row)
-        )
-
-    return [
-        render_row(headers),
-        "  ".join("─" * width for width in widths),
-        *(render_row(row) for row in rows),
-    ]
-
-
-def format_avg_peak_compact(avg_value: float | None, peak_value: float | None) -> str:
-    return f"{format_metric_value(avg_value)} / {format_metric_value(peak_value)}"
-
-
-def format_reset_countdown(next_reset_at: datetime | None) -> str:
-    remaining_days = days_until_reset(next_reset_at)
+def format_reset_phrase(next_reset_at: datetime | None, *, now: datetime | None = None) -> str:
+    remaining_days = days_until_reset(next_reset_at, now=now)
     if remaining_days is None:
-        return "暂无"
+        return "重置时间未知"
     if remaining_days == 0:
-        return "今天"
-    return f"{remaining_days} 天"
+        return "今天重置"
+    return f"{remaining_days} 天后重置"
+
+
+def render_overview_quota_html(status, *, now: datetime | None = None) -> list[str]:
+    if not status.configured:
+        return ["📦 套餐未配置"]
+    percent = f"{status.percent_used:.1f}%" if status.percent_used is not None else "暂无"
+    return [
+        (
+            "📦 已用 "
+            f"{html_code(format_byte_value(status.used_bytes))} / {html_code(format_byte_value(status.limit_bytes))}"
+            f"（{html.escape(percent)}）"
+        ),
+        (
+            f"可用 {html_code(format_byte_value(status.remaining_bytes))}"
+            f" · {html_code(format_reset_phrase(status.next_reset_at, now=now))}"
+        ),
+    ]
 
 
 def format_quota_compact_lines(status) -> list[tuple[str, str, str | None, str | None]]:
@@ -682,7 +676,7 @@ def format_quota_compact_lines(status) -> list[tuple[str, str, str | None, str |
     rows: list[tuple[str, str, str | None, str | None]] = [
         ("上限", format_byte_value(status.limit_bytes), "已用", format_byte_value(status.used_bytes)),
         ("剩余", format_byte_value(status.remaining_bytes), "进度", percent),
-        ("倒计时", format_reset_countdown(status.next_reset_at), None, None),
+        ("倒计时", format_reset_phrase(status.next_reset_at), None, None),
         ("周期", status.cycle_description or "未配置", None, None),
     ]
     if status.period_start is not None and status.next_reset_at is not None:
@@ -713,69 +707,37 @@ def render_panel(text: str) -> str:
 
 def render_node_card(card) -> str:
     node = card.node
-    quota_status = card.quota_status
-    lines = [
-        "━━━━━━━━━━",
-        f"🖥️ {node.name} · {format_status_label(node)} · {format_relative_time(node.last_seen_at)}",
-        f"网卡 {format_network_interface_label(node.latest_network_interface)} · 告警 {card.active_alert_count}",
-        "",
-        "── 资源状态",
-        *render_aligned_table(
-            ("项目", "当前", "1h 均/峰"),
-            [
-                ("CPU", format_metric_value(node.latest_cpu_percent), format_avg_peak_compact(card.trend_1h.avg_cpu_percent, card.trend_1h.peak_cpu_percent)),
-                ("内存", format_metric_value(node.latest_memory_percent), format_avg_peak_compact(card.trend_1h.avg_memory_percent, card.trend_1h.peak_memory_percent)),
-                ("磁盘", format_metric_value(node.latest_disk_percent), format_avg_peak_compact(card.trend_1h.avg_disk_percent, card.trend_1h.peak_disk_percent)),
-            ],
+    load_value = f"{node.latest_load_avg_1m:.2f}" if node.latest_load_avg_1m is not None else "暂无"
+    body_lines = [
+        "<b>资源</b>",
+        (
+            f"⚙️ CPU {html_code(format_metric_value(node.latest_cpu_percent))}"
+            f" · 内存 {html_code(format_metric_value(node.latest_memory_percent))}"
+            f" · 磁盘 {html_code(format_metric_value(node.latest_disk_percent))}"
         ),
-        f"核心 {format_integer_value(node.latest_cpu_count)} · 负载 {node.latest_load_avg_1m:.2f} · 运行 {format_uptime(node.latest_uptime_seconds)}"
-        if node.latest_load_avg_1m is not None
-        else f"核心 {format_integer_value(node.latest_cpu_count)} · 负载 暂无 · 运行 {format_uptime(node.latest_uptime_seconds)}",
-        f"内存 {format_resource_usage(node.latest_memory_used_bytes, node.latest_memory_total_bytes, node.latest_memory_percent)}",
-        f"磁盘 {format_resource_usage(node.latest_disk_used_bytes, node.latest_disk_total_bytes, node.latest_disk_percent)}",
-        f"样本 {card.trend_1h.sample_count}",
-        "",
-        "── 网络流量",
-        *render_aligned_table(
-            ("范围", "下行", "上行"),
-            [
-                ("实时", format_rate_value(card.current_rate.rx_bps), format_rate_value(card.current_rate.tx_bps)),
-                ("1h", format_byte_value(card.trend_1h.rx_bytes), format_byte_value(card.trend_1h.tx_bytes)),
-                ("24h", format_byte_value(card.traffic_24h.rx_bytes), format_byte_value(card.traffic_24h.tx_bytes)),
-                ("累计", format_byte_value(node.latest_rx_bytes), format_byte_value(node.latest_tx_bytes)),
-            ],
+        "<b>近 1 小时 · 均值 / 峰值</b>",
+        (
+            f"CPU {html_code(format_avg_peak_values(card.trend_1h.avg_cpu_percent, card.trend_1h.peak_cpu_percent))}"
+            f"\n内存 {html_code(format_avg_peak_values(card.trend_1h.avg_memory_percent, card.trend_1h.peak_memory_percent))}"
+            f"\n磁盘 {html_code(format_avg_peak_values(card.trend_1h.avg_disk_percent, card.trend_1h.peak_disk_percent))}"
         ),
-        f"数据包 收 {format_integer_value(node.latest_rx_packets)} · 发 {format_integer_value(node.latest_tx_packets)}",
-        f"错/丢 RX {format_network_counter_pair(node.latest_rx_errors, node.latest_rx_dropped)} · TX {format_network_counter_pair(node.latest_tx_errors, node.latest_tx_dropped)}",
+        (
+            f"🧭 {html_code(format_integer_value(node.latest_cpu_count))} 核"
+            f" · 负载 {html_code(load_value)}"
+            f" · 运行 {html_code(format_uptime(node.latest_uptime_seconds))}"
+        ),
         "",
-        "── 流量套餐",
+        "<b>套餐</b>",
+        *render_overview_quota_html(card.quota_status),
     ]
-    if not quota_status.configured:
-        lines.append("未配置")
-    else:
-        quota_percent = f"{quota_status.percent_used:.1f}%" if quota_status.percent_used is not None else "暂无"
-        lines.extend(
-            [
-                *render_aligned_table(
-                    ("上限", "已用", "可用"),
-                    [
-                        (
-                            format_byte_value(quota_status.limit_bytes),
-                            format_byte_value(quota_status.used_bytes),
-                            format_byte_value(quota_status.remaining_bytes),
-                        )
-                    ],
-                ),
-                f"进度 {quota_percent} · 距重置 {format_reset_countdown(quota_status.next_reset_at)}",
-                f"周期 {quota_status.cycle_description or '未配置'}",
-            ]
-        )
-        if quota_status.next_reset_at is not None:
-            lines.append(
-                "重置 "
-                + quota_status.next_reset_at.astimezone(ZoneInfo(settings.report_timezone)).strftime("%m-%d %H:%M")
-            )
-    return "\n".join(lines)
+    if card.active_alert_count:
+        body_lines.insert(1, f"⚠️ 活动告警 {html_code(str(card.active_alert_count))}")
+    title = (
+        f"<b>🖥️ {html.escape(node.name)}</b>"
+        f"  {format_status_label(node)} · {html.escape(format_relative_time(node.last_seen_at))}"
+    )
+    body = "\n".join(body_lines)
+    return f"{title}\n<blockquote>{body}</blockquote>"
 
 
 def render_quota_help_lines() -> list[str]:
@@ -822,12 +784,19 @@ async def send_dashboard(message: Message) -> None:
     await message.answer(render_panel(build_dashboard_menu_text()), parse_mode="HTML", reply_markup=build_dashboard_keyboard())
 
 
-async def safe_edit_callback_message(callback: CallbackQuery, text: str, reply_markup: InlineKeyboardMarkup | None) -> None:
+async def safe_edit_callback_message(
+    callback: CallbackQuery,
+    text: str,
+    reply_markup: InlineKeyboardMarkup | None,
+    *,
+    rich_html: bool = False,
+) -> None:
     if callback.message is None:
         await callback.answer()
         return
     try:
-        await callback.message.edit_text(render_panel(text), parse_mode="HTML", reply_markup=reply_markup)
+        rendered_text = text if rich_html else render_panel(text)
+        await callback.message.edit_text(rendered_text, parse_mode="HTML", reply_markup=reply_markup)
     except TelegramBadRequest as exc:
         if "message is not modified" not in str(exc).lower():
             raise
@@ -840,19 +809,12 @@ async def render_nodes_response() -> tuple[str, InlineKeyboardMarkup | None]:
         overview, cards = await build_nodes_dashboard(session, nodes)
 
     if not nodes:
-        return "📡 节点概览\n当前还没有接入任何节点。", build_single_action_keyboard(CALLBACK_SHOW_NODES)
+        return "<b>📡 节点概览</b>\n当前还没有接入任何节点。", build_single_action_keyboard(CALLBACK_SHOW_NODES)
 
-    lines = [
-        "📡 节点概览",
-        "",
-        *render_metric_block(
-            "总览",
-            [
-                ("在线", str(overview.online_count), "离线", str(overview.offline_count)),
-                ("待接入", str(overview.pending_count), None, None),
-            ],
-        ),
-    ]
+    status_parts = [f"🟢 在线 {overview.online_count}", f"🔴 离线 {overview.offline_count}"]
+    if overview.pending_count:
+        status_parts.append(f"🟡 待接入 {overview.pending_count}")
+    lines = ["<b>📡 节点概览</b>", " · ".join(status_parts)]
     for card in cards:
         lines.extend(["", render_node_card(card)])
     return "\n".join(lines), build_node_list_keyboard([])
@@ -1146,7 +1108,7 @@ async def nodes_handler(message: Message) -> None:
     if await reject_if_not_admin(message):
         return
     text, keyboard = await render_nodes_response()
-    await message.answer(render_panel(text), parse_mode="HTML", reply_markup=keyboard)
+    await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
 
 
 @router.message(Command("node"))
@@ -1422,7 +1384,7 @@ async def show_nodes_callback(callback: CallbackQuery) -> None:
         await callback.answer("无权访问。", show_alert=True)
         return
     text, keyboard = await render_nodes_response()
-    await safe_edit_callback_message(callback, text, keyboard)
+    await safe_edit_callback_message(callback, text, keyboard, rich_html=True)
 
 
 @router.callback_query(F.data == CALLBACK_SHOW_TRAFFIC)
@@ -1784,7 +1746,7 @@ async def delete_node_confirm_callback(callback: CallbackQuery) -> None:
     text, keyboard = await render_nodes_response()
     if callback.message is not None:
         await callback.message.answer(f"✅ 已删除节点：{node.name}")
-    await safe_edit_callback_message(callback, text, keyboard)
+    await safe_edit_callback_message(callback, text, keyboard, rich_html=True)
 
 
 @router.callback_query(F.data.startswith(CALLBACK_NODE_DELETE_CANCEL_PREFIX))

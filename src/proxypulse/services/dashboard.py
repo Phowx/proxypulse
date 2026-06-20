@@ -51,20 +51,12 @@ class NodesOverviewSummary:
     offline_count: int
     pending_count: int
     active_alert_count: int
-    total_rx_bytes_24h: int
-    total_tx_bytes_24h: int
-
-    @property
-    def total_bytes_24h(self) -> int:
-        return self.total_rx_bytes_24h + self.total_tx_bytes_24h
 
 
 @dataclass(slots=True)
 class NodeCardSummary:
     node: Node
     active_alert_count: int
-    current_rate: NodeRateSummary
-    traffic_24h: NodeTrafficWindowSummary
     trend_1h: NodeTrendSummary
     quota_status: QuotaStatus
 
@@ -159,6 +151,7 @@ async def get_trend_summary(
     *,
     end_at: datetime | None = None,
     window: timedelta = timedelta(hours=1),
+    include_traffic: bool = True,
 ) -> NodeTrendSummary:
     window_end = end_at or datetime.now(UTC)
     window_start = window_end - window
@@ -187,8 +180,11 @@ async def get_trend_summary(
         peak_disk_percent,
     ) = aggregate_result.one()
 
-    traffic_map = await get_traffic_window_map(session, [node_id], start_at=window_start, end_at=window_end)
-    traffic_summary = traffic_map.get(node_id, NodeTrafficWindowSummary(rx_bytes=0, tx_bytes=0))
+    if include_traffic:
+        traffic_map = await get_traffic_window_map(session, [node_id], start_at=window_start, end_at=window_end)
+        traffic_summary = traffic_map.get(node_id, NodeTrafficWindowSummary(rx_bytes=0, tx_bytes=0))
+    else:
+        traffic_summary = NodeTrafficWindowSummary(rx_bytes=0, tx_bytes=0)
     return NodeTrendSummary(
         sample_count=sample_count or 0,
         avg_cpu_percent=avg_cpu_percent,
@@ -205,8 +201,6 @@ async def get_trend_summary(
 async def build_nodes_dashboard(session: AsyncSession, nodes: list[Node]) -> tuple[NodesOverviewSummary, list[NodeCardSummary]]:
     node_ids = [node.id for node in nodes]
     now = datetime.now(UTC)
-    traffic_map = await get_traffic_window_map(session, node_ids, start_at=now - timedelta(hours=24), end_at=now)
-    rate_map = await get_current_rate_map(session, node_ids)
     alert_count_map = await count_active_alerts_by_node(session, node_ids)
 
     cards: list[NodeCardSummary] = []
@@ -215,9 +209,7 @@ async def build_nodes_dashboard(session: AsyncSession, nodes: list[Node]) -> tup
             NodeCardSummary(
                 node=node,
                 active_alert_count=alert_count_map.get(node.id, 0),
-                current_rate=rate_map.get(node.id, NodeRateSummary(None, None, None)),
-                traffic_24h=traffic_map.get(node.id, NodeTrafficWindowSummary(rx_bytes=0, tx_bytes=0)),
-                trend_1h=await get_trend_summary(session, node.id, end_at=now),
+                trend_1h=await get_trend_summary(session, node.id, end_at=now, include_traffic=False),
                 quota_status=await get_quota_status(session, node, now=now),
             )
         )
@@ -227,8 +219,6 @@ async def build_nodes_dashboard(session: AsyncSession, nodes: list[Node]) -> tup
         offline_count=sum(1 for node in nodes if node.status.value == "offline"),
         pending_count=sum(1 for node in nodes if node.status.value == "pending"),
         active_alert_count=sum(alert_count_map.values()),
-        total_rx_bytes_24h=sum(card.traffic_24h.rx_bytes for card in cards),
-        total_tx_bytes_24h=sum(card.traffic_24h.tx_bytes for card in cards),
     )
     return overview, cards
 

@@ -11,11 +11,10 @@ from proxypulse.bot.main import (
     build_node_detail_keyboard,
     build_node_list_keyboard,
     dashboard_button_rows,
-    display_width,
-    render_aligned_table,
     render_node_card,
+    render_overview_quota_html,
 )
-from proxypulse.services.dashboard import NodeCardSummary, NodeRateSummary, NodeTrafficWindowSummary, NodeTrendSummary
+from proxypulse.services.dashboard import NodeCardSummary, NodeTrendSummary
 from proxypulse.services.quota import QuotaStatus
 
 
@@ -44,15 +43,6 @@ class BotFormattingTests(TestCase):
 
         self.assertEqual([button.text for button in keyboard.inline_keyboard[0]], ["刷新详情", "返回节点列表", "返回菜单"])
         self.assertEqual([button.text for button in keyboard.inline_keyboard[1]], ["🗑️ 删除节点"])
-
-    def test_aligned_table_accounts_for_chinese_width(self) -> None:
-        rendered = render_aligned_table(
-            ("范围", "下行", "上行"),
-            [("实时", "1.0 MB/s", "20.0 KB/s"), ("24h", "10.0 GB", "2.0 GB")],
-        )
-
-        widths = [display_width(line) for line in rendered]
-        self.assertEqual(len(set(widths)), 1)
 
     def test_render_node_card_handles_missing_values(self) -> None:
         node = SimpleNamespace(
@@ -86,8 +76,6 @@ class BotFormattingTests(TestCase):
         card = NodeCardSummary(
             node=node,
             active_alert_count=2,
-            current_rate=NodeRateSummary(rx_bps=None, tx_bps=None, sample_seconds=None),
-            traffic_24h=NodeTrafficWindowSummary(rx_bytes=0, tx_bytes=0),
             trend_1h=NodeTrendSummary(
                 sample_count=0,
                 avg_cpu_percent=None,
@@ -117,13 +105,36 @@ class BotFormattingTests(TestCase):
         self.assertIn("hk-01", rendered)
         self.assertIn("🔴 离线", rendered)
         self.assertIn("暂无", rendered)
-        self.assertIn("CPU   暂无", rendered)
+        self.assertIn("CPU <code>暂无</code>", rendered)
         self.assertNotIn("基础信息", rendered)
-        self.assertIn("项目  当前", rendered)
-        self.assertIn("范围", rendered)
-        self.assertIn("24h", rendered)
-        self.assertIn("告警 2", rendered)
-        self.assertIn("流量套餐\n未配置", rendered)
+        self.assertNotIn("网络流量", rendered)
+        self.assertNotIn("24h", rendered)
+        self.assertNotIn("数据包", rendered)
+        self.assertIn("活动告警 <code>2</code>", rendered)
+        self.assertIn("<blockquote>", rendered)
+        self.assertIn("📦 套餐未配置", rendered)
+
+    def test_overview_quota_is_two_line_summary(self) -> None:
+        now = datetime(2026, 6, 20, 0, 0, tzinfo=timezone.utc)
+        status = QuotaStatus(
+            configured=True,
+            limit_bytes=2 * 1024**4,
+            used_bytes=15 * 1024**3,
+            remaining_bytes=2 * 1024**4 - 15 * 1024**3,
+            percent_used=0.7,
+            period_start=now,
+            next_reset_at=datetime(2026, 7, 10, 0, 0, tzinfo=timezone.utc),
+            cycle_description="每月 10 日 00:00",
+            calibration_bytes=None,
+        )
+
+        rendered = "\n".join(render_overview_quota_html(status, now=now))
+
+        self.assertIn("已用", rendered)
+        self.assertIn("可用", rendered)
+        self.assertIn("20 天后重置", rendered)
+        self.assertNotIn("周期", rendered)
+        self.assertNotIn("07-10", rendered)
 
 
 class BotResponseTests(IsolatedAsyncioTestCase):
