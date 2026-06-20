@@ -84,7 +84,7 @@ python -m proxypulse.agent
 - `/start`：打开控制台首页。
 - `/menu`：打开控制台菜单。
 - `/enroll <node_name>`：创建或刷新一次性接入令牌。
-- `/nodes`：在同一概览中查看所有已接入节点的基础信息、实时资源、网络流量、趋势和套餐状态。
+- `/nodes`：在同一概览中以表格查看所有已接入节点的实时资源、网络流量、趋势和套餐状态。
 - `/node <node_name>`：单独查看某个节点详情，保留用于命令直达。
 - `/delete_node <node_name>`：删除节点，并在确认后清理其历史指标、告警和流量套餐配置。
 - `/traffic`：查看最近 24 小时流量汇总。
@@ -121,7 +121,7 @@ python -m proxypulse.agent
 
 - `/traffic` 会根据累计 `RX/TX` 快照计算滚动最近 24 小时流量。
 - `/daily` 会根据配置时区展示上一自然日的日报。
-- 日报同时展示各节点截至报告日结束时的本月累计流量和套餐剩余可用量。
+- 日报同时展示各节点截至报告日结束时的本月累计流量、套餐剩余可用量和距离下次重置的天数。
 - 默认使用 `Asia/Shanghai`，并在每天 `09:00` 自动推送前一日的日报。
 - 可以通过 `/daily_time HH:MM` 调整自动推送时间；`PROXYPULSE_DAILY_REPORT_HOUR` 和 `PROXYPULSE_DAILY_REPORT_MINUTE` 只作为默认值。
 - 报表按节点分组展示，不做节点排行。

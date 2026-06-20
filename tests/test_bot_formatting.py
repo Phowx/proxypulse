@@ -1,10 +1,20 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from types import SimpleNamespace
-from unittest import TestCase
+from unittest import IsolatedAsyncioTestCase, TestCase
+from unittest.mock import AsyncMock, patch
 
-from proxypulse.bot.main import build_dashboard_menu_text, build_node_detail_keyboard, build_node_list_keyboard, dashboard_button_rows, render_node_card
+from proxypulse.bot import main as bot_main
+from proxypulse.bot.main import (
+    build_dashboard_menu_text,
+    build_node_detail_keyboard,
+    build_node_list_keyboard,
+    dashboard_button_rows,
+    display_width,
+    render_aligned_table,
+    render_node_card,
+)
 from proxypulse.services.dashboard import NodeCardSummary, NodeRateSummary, NodeTrafficWindowSummary, NodeTrendSummary
 from proxypulse.services.quota import QuotaStatus
 
@@ -34,6 +44,15 @@ class BotFormattingTests(TestCase):
 
         self.assertEqual([button.text for button in keyboard.inline_keyboard[0]], ["刷新详情", "返回节点列表", "返回菜单"])
         self.assertEqual([button.text for button in keyboard.inline_keyboard[1]], ["🗑️ 删除节点"])
+
+    def test_aligned_table_accounts_for_chinese_width(self) -> None:
+        rendered = render_aligned_table(
+            ("范围", "下行", "上行"),
+            [("实时", "1.0 MB/s", "20.0 KB/s"), ("24h", "10.0 GB", "2.0 GB")],
+        )
+
+        widths = [display_width(line) for line in rendered]
+        self.assertEqual(len(set(widths)), 1)
 
     def test_render_node_card_handles_missing_values(self) -> None:
         node = SimpleNamespace(
@@ -98,8 +117,34 @@ class BotFormattingTests(TestCase):
         self.assertIn("hk-01", rendered)
         self.assertIn("🔴 离线", rendered)
         self.assertIn("暂无", rendered)
-        self.assertIn("CPU 暂无", rendered)
-        self.assertIn("基础信息", rendered)
-        self.assertIn("24h↓", rendered)
+        self.assertIn("CPU   暂无", rendered)
+        self.assertNotIn("基础信息", rendered)
+        self.assertIn("项目  当前", rendered)
+        self.assertIn("范围", rendered)
+        self.assertIn("24h", rendered)
         self.assertIn("告警 2", rendered)
-        self.assertIn("套餐 未配置", rendered)
+        self.assertIn("流量套餐\n未配置", rendered)
+
+
+class BotResponseTests(IsolatedAsyncioTestCase):
+    async def test_daily_response_has_no_action_keyboard(self) -> None:
+        class SessionContext:
+            async def __aenter__(self):
+                return object()
+
+            async def __aexit__(self, exc_type, exc, traceback):
+                return False
+
+        with (
+            patch.object(bot_main, "SessionLocal", return_value=SessionContext()),
+            patch.object(
+                bot_main,
+                "summarize_previous_local_day",
+                AsyncMock(return_value=(date(2026, 4, 10), object())),
+            ),
+            patch.object(bot_main, "format_traffic_summary", return_value="日报"),
+        ):
+            text, keyboard = await bot_main.render_daily_response()
+
+        self.assertEqual(text, "日报")
+        self.assertIsNone(keyboard)

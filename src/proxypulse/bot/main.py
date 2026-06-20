@@ -6,6 +6,7 @@ import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Literal
+from unicodedata import east_asian_width
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot, Dispatcher, F, Router
@@ -48,6 +49,7 @@ from proxypulse.services.quota import (
     clear_quota,
     configure_interval_quota,
     configure_monthly_quota,
+    days_until_reset,
     format_quota_status,
     get_quota_status,
     parse_limit_gib,
@@ -633,6 +635,45 @@ def render_metric_block(title: str, rows: list[tuple[str, str, str | None, str |
     return rendered
 
 
+def display_width(value: str) -> int:
+    return sum(2 if east_asian_width(character) in {"W", "F"} else 1 for character in value)
+
+
+def pad_display(value: str, width: int, *, right: bool = False) -> str:
+    padding = " " * max(width - display_width(value), 0)
+    return f"{padding}{value}" if right else f"{value}{padding}"
+
+
+def render_aligned_table(headers: tuple[str, ...], rows: list[tuple[str, ...]]) -> list[str]:
+    all_rows = [headers, *rows]
+    widths = [max(display_width(row[index]) for row in all_rows) for index in range(len(headers))]
+
+    def render_row(row: tuple[str, ...]) -> str:
+        return "  ".join(
+            pad_display(value, widths[index], right=index > 0)
+            for index, value in enumerate(row)
+        )
+
+    return [
+        render_row(headers),
+        "  ".join("─" * width for width in widths),
+        *(render_row(row) for row in rows),
+    ]
+
+
+def format_avg_peak_compact(avg_value: float | None, peak_value: float | None) -> str:
+    return f"{format_metric_value(avg_value)} / {format_metric_value(peak_value)}"
+
+
+def format_reset_countdown(next_reset_at: datetime | None) -> str:
+    remaining_days = days_until_reset(next_reset_at)
+    if remaining_days is None:
+        return "暂无"
+    if remaining_days == 0:
+        return "今天"
+    return f"{remaining_days} 天"
+
+
 def format_quota_compact_lines(status) -> list[tuple[str, str, str | None, str | None]]:
     if not status.configured:
         return [("套餐", "未配置", None, None)]
@@ -641,6 +682,7 @@ def format_quota_compact_lines(status) -> list[tuple[str, str, str | None, str |
     rows: list[tuple[str, str, str | None, str | None]] = [
         ("上限", format_byte_value(status.limit_bytes), "已用", format_byte_value(status.used_bytes)),
         ("剩余", format_byte_value(status.remaining_bytes), "进度", percent),
+        ("倒计时", format_reset_countdown(status.next_reset_at), None, None),
         ("周期", status.cycle_description or "未配置", None, None),
     ]
     if status.period_start is not None and status.next_reset_at is not None:
@@ -671,54 +713,68 @@ def render_panel(text: str) -> str:
 
 def render_node_card(card) -> str:
     node = card.node
+    quota_status = card.quota_status
     lines = [
         "━━━━━━━━━━",
-        f"🖥️ {node.name}",
-        render_metric_pair("状态", format_status_label(node), "上报", format_relative_time(node.last_seen_at)),
-        render_metric_single("网卡", format_network_interface_label(node.latest_network_interface)),
+        f"🖥️ {node.name} · {format_status_label(node)} · {format_relative_time(node.last_seen_at)}",
+        f"网卡 {format_network_interface_label(node.latest_network_interface)} · 告警 {card.active_alert_count}",
         "",
-        *render_metric_block(
-            "基础信息",
+        "── 资源状态",
+        *render_aligned_table(
+            ("项目", "当前", "1h 均/峰"),
             [
-                ("主机", node.hostname or "未上报", "系统", node.platform or "未上报"),
-                ("IP", ", ".join(node.ips) if node.ips else "未上报", None, None),
+                ("CPU", format_metric_value(node.latest_cpu_percent), format_avg_peak_compact(card.trend_1h.avg_cpu_percent, card.trend_1h.peak_cpu_percent)),
+                ("内存", format_metric_value(node.latest_memory_percent), format_avg_peak_compact(card.trend_1h.avg_memory_percent, card.trend_1h.peak_memory_percent)),
+                ("磁盘", format_metric_value(node.latest_disk_percent), format_avg_peak_compact(card.trend_1h.avg_disk_percent, card.trend_1h.peak_disk_percent)),
             ],
         ),
+        f"核心 {format_integer_value(node.latest_cpu_count)} · 负载 {node.latest_load_avg_1m:.2f} · 运行 {format_uptime(node.latest_uptime_seconds)}"
+        if node.latest_load_avg_1m is not None
+        else f"核心 {format_integer_value(node.latest_cpu_count)} · 负载 暂无 · 运行 {format_uptime(node.latest_uptime_seconds)}",
+        f"内存 {format_resource_usage(node.latest_memory_used_bytes, node.latest_memory_total_bytes, node.latest_memory_percent)}",
+        f"磁盘 {format_resource_usage(node.latest_disk_used_bytes, node.latest_disk_total_bytes, node.latest_disk_percent)}",
+        f"样本 {card.trend_1h.sample_count}",
         "",
-        *render_metric_block(
-            "实时状态",
+        "── 网络流量",
+        *render_aligned_table(
+            ("范围", "下行", "上行"),
             [
-                ("CPU", format_metric_value(node.latest_cpu_percent), "核心", format_integer_value(node.latest_cpu_count)),
-                ("负载", f"{node.latest_load_avg_1m:.2f}" if node.latest_load_avg_1m is not None else "暂无", "运行", format_uptime(node.latest_uptime_seconds)),
-                ("内存", format_resource_usage(node.latest_memory_used_bytes, node.latest_memory_total_bytes, node.latest_memory_percent), None, None),
-                ("磁盘", format_resource_usage(node.latest_disk_used_bytes, node.latest_disk_total_bytes, node.latest_disk_percent), None, None),
+                ("实时", format_rate_value(card.current_rate.rx_bps), format_rate_value(card.current_rate.tx_bps)),
+                ("1h", format_byte_value(card.trend_1h.rx_bytes), format_byte_value(card.trend_1h.tx_bytes)),
+                ("24h", format_byte_value(card.traffic_24h.rx_bytes), format_byte_value(card.traffic_24h.tx_bytes)),
+                ("累计", format_byte_value(node.latest_rx_bytes), format_byte_value(node.latest_tx_bytes)),
             ],
         ),
+        f"数据包 收 {format_integer_value(node.latest_rx_packets)} · 发 {format_integer_value(node.latest_tx_packets)}",
+        f"错/丢 RX {format_network_counter_pair(node.latest_rx_errors, node.latest_rx_dropped)} · TX {format_network_counter_pair(node.latest_tx_errors, node.latest_tx_dropped)}",
         "",
-        *render_metric_block(
-            "网络流量",
-            [
-                ("下行", format_rate_value(card.current_rate.rx_bps), "上行", format_rate_value(card.current_rate.tx_bps)),
-                ("累计↓", format_byte_value(node.latest_rx_bytes), "累计↑", format_byte_value(node.latest_tx_bytes)),
-                ("24h↓", format_byte_value(card.traffic_24h.rx_bytes), "24h↑", format_byte_value(card.traffic_24h.tx_bytes)),
-                ("收包", format_integer_value(node.latest_rx_packets), "发包", format_integer_value(node.latest_tx_packets)),
-                ("RX错/丢", format_network_counter_pair(node.latest_rx_errors, node.latest_rx_dropped), "TX错/丢", format_network_counter_pair(node.latest_tx_errors, node.latest_tx_dropped)),
-            ],
-        ),
-        "",
-        *render_metric_block(
-            "近 1 小时趋势",
-            [
-                ("CPU", format_avg_peak(card.trend_1h.avg_cpu_percent, card.trend_1h.peak_cpu_percent), None, None),
-                ("内存", format_avg_peak(card.trend_1h.avg_memory_percent, card.trend_1h.peak_memory_percent), None, None),
-                ("磁盘", format_avg_peak(card.trend_1h.avg_disk_percent, card.trend_1h.peak_disk_percent), None, None),
-                ("1h↓", format_byte_value(card.trend_1h.rx_bytes), "1h↑", format_byte_value(card.trend_1h.tx_bytes)),
-                ("样本", str(card.trend_1h.sample_count), "告警", str(card.active_alert_count)),
-            ],
-        ),
-        "",
-        *render_metric_block("流量套餐", format_quota_compact_lines(card.quota_status)),
+        "── 流量套餐",
     ]
+    if not quota_status.configured:
+        lines.append("未配置")
+    else:
+        quota_percent = f"{quota_status.percent_used:.1f}%" if quota_status.percent_used is not None else "暂无"
+        lines.extend(
+            [
+                *render_aligned_table(
+                    ("上限", "已用", "可用"),
+                    [
+                        (
+                            format_byte_value(quota_status.limit_bytes),
+                            format_byte_value(quota_status.used_bytes),
+                            format_byte_value(quota_status.remaining_bytes),
+                        )
+                    ],
+                ),
+                f"进度 {quota_percent} · 距重置 {format_reset_countdown(quota_status.next_reset_at)}",
+                f"周期 {quota_status.cycle_description or '未配置'}",
+            ]
+        )
+        if quota_status.next_reset_at is not None:
+            lines.append(
+                "重置 "
+                + quota_status.next_reset_at.astimezone(ZoneInfo(settings.report_timezone)).strftime("%m-%d %H:%M")
+            )
     return "\n".join(lines)
 
 
@@ -894,10 +950,10 @@ async def render_traffic_response() -> tuple[str, InlineKeyboardMarkup]:
     return format_traffic_summary(summary), build_single_action_keyboard(CALLBACK_SHOW_TRAFFIC)
 
 
-async def render_daily_response() -> tuple[str, InlineKeyboardMarkup]:
+async def render_daily_response() -> tuple[str, InlineKeyboardMarkup | None]:
     async with SessionLocal() as session:
         _, summary = await summarize_previous_local_day(session)
-    return format_traffic_summary(summary), build_single_action_keyboard(CALLBACK_SHOW_DAILY)
+    return format_traffic_summary(summary), None
 
 
 async def render_quota_response(node_name: str) -> str:

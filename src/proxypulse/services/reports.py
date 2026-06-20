@@ -20,6 +20,7 @@ class NodeTrafficSummary:
     tx_bytes: int
     month_used_bytes: int | None = None
     available_bytes: int | None = None
+    days_until_reset: int | None = None
 
     @property
     def total_bytes(self) -> int:
@@ -205,7 +206,7 @@ async def summarize_previous_local_day(session: AsyncSession, today_local: date 
     month_usage_by_node = {item.node_name: item.total_bytes for item in month_summary.node_summaries}
 
     # Import locally to keep report primitives independent from quota calculations.
-    from proxypulse.services.quota import get_quota_status
+    from proxypulse.services.quota import days_until_reset, get_quota_status
 
     node_result = await session.execute(select(Node).order_by(Node.name.asc()))
     nodes_by_name = {node.name: node for node in node_result.scalars().all()}
@@ -217,6 +218,10 @@ async def summarize_previous_local_day(session: AsyncSession, today_local: date 
         quota_status = await get_quota_status(session, node, now=end_local.astimezone(UTC))
         if quota_status.configured:
             item.available_bytes = quota_status.remaining_bytes
+            item.days_until_reset = days_until_reset(
+                quota_status.next_reset_at,
+                now=end_local.astimezone(UTC),
+            )
     return report_day, summary
 
 
@@ -254,6 +259,12 @@ def format_traffic_summary(summary: TrafficSummary) -> str:
                 if item.available_bytes is not None
                 else "套餐可用  未配置"
             )
+            if item.days_until_reset is not None:
+                item_lines.append(
+                    "距重置  今天"
+                    if item.days_until_reset == 0
+                    else f"距重置  {item.days_until_reset} 天"
+                )
         lines.append("\n".join(item_lines))
     return "\n".join(lines)
 

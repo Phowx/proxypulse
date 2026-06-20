@@ -65,7 +65,9 @@ class DailyReportUsageTests(IsolatedAsyncioTestCase):
         self.assertEqual(item.total_bytes, 1_500)
         self.assertEqual(item.month_used_bytes, 2_500)
         self.assertEqual(item.available_bytes, 7_500)
+        self.assertEqual(item.days_until_reset, 20)
 
         rendered = format_traffic_summary(summary)
         self.assertIn("本月累计  2.4 KB", rendered)
         self.assertIn("套餐可用  7.3 KB", rendered)
+        self.assertIn("距重置  20 天", rendered)

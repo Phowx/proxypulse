@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import calendar
+import math
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -31,6 +32,17 @@ class QuotaStatus:
     next_reset_at: datetime | None
     cycle_description: str | None
     calibration_bytes: int | None
+
+
+def days_until_reset(next_reset_at: datetime | None, *, now: datetime | None = None) -> int | None:
+    if next_reset_at is None:
+        return None
+    reset_at = _ensure_aware(next_reset_at)
+    reference = _ensure_aware(now or datetime.now(UTC))
+    remaining_seconds = (reset_at - reference).total_seconds()
+    if remaining_seconds <= 0:
+        return 0
+    return math.ceil(remaining_seconds / 86400)
 
 
 def _local_tz() -> ZoneInfo:
@@ -333,6 +345,8 @@ def format_quota_status(status: QuotaStatus) -> list[str]:
         lines.append(f"本期开始：{status.period_start.astimezone(_local_tz()).strftime('%Y-%m-%d %H:%M')}")
     if status.next_reset_at is not None:
         lines.append(f"下次重置：{status.next_reset_at.astimezone(_local_tz()).strftime('%Y-%m-%d %H:%M')}")
+        remaining_days = days_until_reset(status.next_reset_at)
+        lines.append("距重置：今天" if remaining_days == 0 else f"距重置：{remaining_days} 天")
     if status.calibration_bytes is not None:
         lines.append(f"校准已用：{format_bytes(status.calibration_bytes)}")
     return lines

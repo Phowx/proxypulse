@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from proxypulse.core.db import Base
 from proxypulse.core.models import MetricSnapshot, Node, NodeStatus, TrafficQuotaCycle
-from proxypulse.services.quota import get_quota_status
+from proxypulse.services.quota import days_until_reset, get_quota_status
 
 
 class QuotaResetTests(IsolatedAsyncioTestCase):
@@ -19,6 +19,13 @@ class QuotaResetTests(IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self) -> None:
         await self.engine.dispose()
+
+    async def test_days_until_reset_rounds_partial_days_up(self) -> None:
+        now = datetime(2026, 4, 10, 12, 0, tzinfo=timezone.utc)
+
+        self.assertEqual(days_until_reset(now + timedelta(days=2, seconds=1), now=now), 3)
+        self.assertEqual(days_until_reset(now, now=now), 0)
+        self.assertIsNone(days_until_reset(None, now=now))
 
     async def test_quota_status_handles_counter_reset_after_calibration(self) -> None:
         now = datetime(2026, 4, 11, 12, 0, tzinfo=timezone.utc)
