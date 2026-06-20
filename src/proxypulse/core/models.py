@@ -4,7 +4,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Index, Integer, JSON, String, Text, func
+from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Index, Integer, JSON, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from proxypulse.core.db import Base
@@ -14,11 +14,6 @@ class NodeStatus(str, enum.Enum):
     pending = "pending"
     online = "online"
     offline = "offline"
-
-
-class AlertStatus(str, enum.Enum):
-    active = "active"
-    resolved = "resolved"
 
 
 class TrafficQuotaCycle(str, enum.Enum):
@@ -52,12 +47,6 @@ class Node(Base):
     latest_network_interface: Mapped[str | None] = mapped_column(String(64), nullable=True)
     latest_rx_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     latest_tx_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    latest_rx_packets: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    latest_tx_packets: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    latest_rx_errors: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    latest_tx_errors: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    latest_rx_dropped: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    latest_tx_dropped: Mapped[int | None] = mapped_column(Integer, nullable=True)
     traffic_quota_limit_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     traffic_quota_cycle_type: Mapped[TrafficQuotaCycle | None] = mapped_column(Enum(TrafficQuotaCycle), nullable=True)
     traffic_quota_reset_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -81,7 +70,6 @@ class Node(Base):
     )
 
     metric_snapshots: Mapped[list["MetricSnapshot"]] = relationship(back_populates="node", cascade="all, delete-orphan")
-    alert_events: Mapped[list["AlertEvent"]] = relationship(back_populates="node", cascade="all, delete-orphan")
 
 
 class MetricSnapshot(Base):
@@ -105,14 +93,7 @@ class MetricSnapshot(Base):
     network_interface: Mapped[str | None] = mapped_column(String(64), nullable=True)
     rx_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
     tx_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
-    rx_packets: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    tx_packets: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    rx_errors: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    tx_errors: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    rx_dropped: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    tx_dropped: Mapped[int | None] = mapped_column(Integer, nullable=True)
     uptime_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
-    raw_payload: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -120,36 +101,6 @@ class MetricSnapshot(Base):
     )
 
     node: Mapped[Node] = relationship(back_populates="metric_snapshots")
-
-
-class AlertEvent(Base):
-    __tablename__ = "alert_events"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    node_id: Mapped[str] = mapped_column(ForeignKey("nodes.id", ondelete="CASCADE"), index=True)
-    alert_key: Mapped[str] = mapped_column(String(120), index=True)
-    metric_name: Mapped[str] = mapped_column(String(64), nullable=False)
-    status: Mapped[AlertStatus] = mapped_column(Enum(AlertStatus), default=AlertStatus.active, nullable=False)
-    severity: Mapped[str] = mapped_column(String(32), default="warning", nullable=False)
-    summary: Mapped[str] = mapped_column(String(255), nullable=False)
-    current_value: Mapped[float | None] = mapped_column(Float, nullable=True)
-    threshold_value: Mapped[float | None] = mapped_column(Float, nullable=True)
-    triggered_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        server_default=func.now(),
-        nullable=False,
-    )
-    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    last_notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    last_notification_status: Mapped[AlertStatus | None] = mapped_column(Enum(AlertStatus), nullable=True)
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        server_default=func.now(),
-        onupdate=func.now(),
-        nullable=False,
-    )
-
-    node: Mapped[Node] = relationship(back_populates="alert_events")
 
 
 class ReportRun(Base):

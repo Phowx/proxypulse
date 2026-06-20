@@ -110,12 +110,6 @@ async def post_metrics(client: httpx.AsyncClient, token: str) -> None:
             "network_interface": metrics.network_interface,
             "rx_bytes": metrics.rx_bytes,
             "tx_bytes": metrics.tx_bytes,
-            "rx_packets": metrics.rx_packets,
-            "tx_packets": metrics.tx_packets,
-            "rx_errors": metrics.rx_errors,
-            "tx_errors": metrics.tx_errors,
-            "rx_dropped": metrics.rx_dropped,
-            "tx_dropped": metrics.tx_dropped,
             "uptime_seconds": metrics.uptime_seconds,
         },
     )
@@ -125,14 +119,15 @@ async def post_metrics(client: httpx.AsyncClient, token: str) -> None:
 async def run_agent() -> None:
     state = load_state(settings.agent_state_path)
     timeout = httpx.Timeout(settings.request_timeout_seconds)
+    psutil.cpu_percent(interval=None)
     # Follow HTTP->HTTPS redirects during server migrations so agents do not
     # drop offline just because the public endpoint was upgraded behind a proxy.
     async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
         state = await ensure_registration(client, state)
         token = state["agent_token"]
+        await post_heartbeat(client, token)
 
         while True:
-            await post_heartbeat(client, token)
             await post_metrics(client, token)
             await asyncio.sleep(settings.poll_interval_seconds)
 

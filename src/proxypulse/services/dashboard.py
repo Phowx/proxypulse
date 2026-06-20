@@ -8,7 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from proxypulse.core.config import get_settings
 from proxypulse.core.models import MetricSnapshot, Node
-from proxypulse.services.alerts import count_active_alerts_by_node
 from proxypulse.services.quota import QuotaStatus, get_quota_status
 from proxypulse.services.reports import counter_delta, sum_snapshot_traffic_by_node
 
@@ -50,13 +49,11 @@ class NodesOverviewSummary:
     online_count: int
     offline_count: int
     pending_count: int
-    active_alert_count: int
 
 
 @dataclass(slots=True)
 class NodeCardSummary:
     node: Node
-    active_alert_count: int
     trend_1h: NodeTrendSummary
     quota_status: QuotaStatus
 
@@ -65,8 +62,6 @@ class NodeCardSummary:
 class NodeDetailSummary:
     current_rate: NodeRateSummary
     trend_1h: NodeTrendSummary
-    traffic_24h: NodeTrafficWindowSummary
-    active_alert_count: int
 
 
 def _db_datetime(value: datetime) -> datetime:
@@ -199,16 +194,13 @@ async def get_trend_summary(
 
 
 async def build_nodes_dashboard(session: AsyncSession, nodes: list[Node]) -> tuple[NodesOverviewSummary, list[NodeCardSummary]]:
-    node_ids = [node.id for node in nodes]
     now = datetime.now(UTC)
-    alert_count_map = await count_active_alerts_by_node(session, node_ids)
 
     cards: list[NodeCardSummary] = []
     for node in nodes:
         cards.append(
             NodeCardSummary(
                 node=node,
-                active_alert_count=alert_count_map.get(node.id, 0),
                 trend_1h=await get_trend_summary(session, node.id, end_at=now, include_traffic=False),
                 quota_status=await get_quota_status(session, node, now=now),
             )
@@ -218,7 +210,6 @@ async def build_nodes_dashboard(session: AsyncSession, nodes: list[Node]) -> tup
         online_count=sum(1 for node in nodes if node.is_online),
         offline_count=sum(1 for node in nodes if node.status.value == "offline"),
         pending_count=sum(1 for node in nodes if node.status.value == "pending"),
-        active_alert_count=sum(alert_count_map.values()),
     )
     return overview, cards
 
@@ -226,11 +217,7 @@ async def build_nodes_dashboard(session: AsyncSession, nodes: list[Node]) -> tup
 async def build_node_detail_summary(session: AsyncSession, node: Node) -> NodeDetailSummary:
     now = datetime.now(UTC)
     rate_map = await get_current_rate_map(session, [node.id])
-    traffic_map = await get_traffic_window_map(session, [node.id], start_at=now - timedelta(hours=24), end_at=now)
-    alert_count_map = await count_active_alerts_by_node(session, [node.id])
     return NodeDetailSummary(
         current_rate=rate_map.get(node.id, NodeRateSummary(None, None, None)),
         trend_1h=await get_trend_summary(session, node.id, end_at=now),
-        traffic_24h=traffic_map.get(node.id, NodeTrafficWindowSummary(rx_bytes=0, tx_bytes=0)),
-        active_alert_count=alert_count_map.get(node.id, 0),
     )

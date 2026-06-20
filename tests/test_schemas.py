@@ -14,11 +14,13 @@ class SchemasTests(TestCase):
             load_avg_1m=0.6,
             rx_bytes=1_000,
             tx_bytes=2_000,
+            rx_packets=123,
+            rx_errors=4,
             uptime_seconds=500,
         )
 
         self.assertIsNone(payload.network_interface)
-        self.assertIsNone(payload.rx_packets)
+        self.assertNotIn("rx_packets", payload.model_dump())
         self.assertIsNone(payload.memory_total_bytes)
 
     def test_external_network_identity_request_accepts_valid_payload(self) -> None:

@@ -52,12 +52,6 @@ async def _migrate_sqlite_schema(conn) -> None:
             "latest_disk_total_bytes": "ALTER TABLE nodes ADD COLUMN latest_disk_total_bytes INTEGER",
             "latest_disk_used_bytes": "ALTER TABLE nodes ADD COLUMN latest_disk_used_bytes INTEGER",
             "latest_network_interface": "ALTER TABLE nodes ADD COLUMN latest_network_interface VARCHAR(64)",
-            "latest_rx_packets": "ALTER TABLE nodes ADD COLUMN latest_rx_packets INTEGER",
-            "latest_tx_packets": "ALTER TABLE nodes ADD COLUMN latest_tx_packets INTEGER",
-            "latest_rx_errors": "ALTER TABLE nodes ADD COLUMN latest_rx_errors INTEGER",
-            "latest_tx_errors": "ALTER TABLE nodes ADD COLUMN latest_tx_errors INTEGER",
-            "latest_rx_dropped": "ALTER TABLE nodes ADD COLUMN latest_rx_dropped INTEGER",
-            "latest_tx_dropped": "ALTER TABLE nodes ADD COLUMN latest_tx_dropped INTEGER",
         }
         | {
         "traffic_quota_limit_bytes": "ALTER TABLE nodes ADD COLUMN traffic_quota_limit_bytes INTEGER",
@@ -83,12 +77,6 @@ async def _migrate_sqlite_schema(conn) -> None:
             "disk_total_bytes": "ALTER TABLE metric_snapshots ADD COLUMN disk_total_bytes INTEGER",
             "disk_used_bytes": "ALTER TABLE metric_snapshots ADD COLUMN disk_used_bytes INTEGER",
             "network_interface": "ALTER TABLE metric_snapshots ADD COLUMN network_interface VARCHAR(64)",
-            "rx_packets": "ALTER TABLE metric_snapshots ADD COLUMN rx_packets INTEGER",
-            "tx_packets": "ALTER TABLE metric_snapshots ADD COLUMN tx_packets INTEGER",
-            "rx_errors": "ALTER TABLE metric_snapshots ADD COLUMN rx_errors INTEGER",
-            "tx_errors": "ALTER TABLE metric_snapshots ADD COLUMN tx_errors INTEGER",
-            "rx_dropped": "ALTER TABLE metric_snapshots ADD COLUMN rx_dropped INTEGER",
-            "tx_dropped": "ALTER TABLE metric_snapshots ADD COLUMN tx_dropped INTEGER",
         },
     )
 

@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     cloudflare_api_token: str = ""
     cloudflare_zones_raw: str = Field(default="", alias="cloudflare_zones")
     admin_telegram_ids_raw: str = Field(default="", alias="admin_telegram_ids")
-    poll_interval_seconds: int = 15
+    poll_interval_seconds: int = 30
     agent_name: str = Field(default_factory=socket.gethostname)
     agent_state_path: Path = Path("./agent-state.json")
     agent_enrollment_token: str = ""
@@ -44,11 +44,7 @@ class Settings(BaseSettings):
     network_interface_strategy: Literal["auto", "fixed", "aggregate"] = "auto"
     request_timeout_seconds: float = 10.0
     offline_after_seconds: int = 90
-    alert_scan_interval_seconds: int = 30
-    resource_alerts_enabled: bool = True
-    cpu_alert_threshold: float = 85.0
-    memory_alert_threshold: float = 90.0
-    disk_alert_threshold: float = 90.0
+    maintenance_interval_seconds: int = 30
     report_timezone: str = "Asia/Shanghai"
     daily_report_hour: int = 9
     daily_report_minute: int = 0

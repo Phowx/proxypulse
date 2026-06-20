@@ -4,6 +4,7 @@ import os
 import socket
 import time
 from dataclasses import dataclass
+from functools import lru_cache
 
 import psutil
 
@@ -25,12 +26,6 @@ class CollectedMetrics:
     network_interface: str
     rx_bytes: int
     tx_bytes: int
-    rx_packets: int
-    tx_packets: int
-    rx_errors: int
-    tx_errors: int
-    rx_dropped: int
-    tx_dropped: int
     uptime_seconds: int
 
 
@@ -74,6 +69,7 @@ def _match_interface_by_local_ip(local_ip: str) -> str | None:
     return None
 
 
+@lru_cache(maxsize=1)
 def _detect_primary_interface() -> str | None:
     routed_interface = _route_interface()
     if routed_interface:
@@ -96,50 +92,23 @@ def _counters_for_interface(network_interface: str) -> tuple[str, psutil._common
     return network_interface, counters
 
 
-def _aggregate_counters() -> tuple[str, tuple[int, int, int, int, int, int, int, int]]:
+def _aggregate_counters() -> tuple[str, tuple[int, int]]:
     rx_bytes = 0
     tx_bytes = 0
-    rx_packets = 0
-    tx_packets = 0
-    rx_errors = 0
-    tx_errors = 0
-    rx_dropped = 0
-    tx_dropped = 0
 
     for interface, counters in psutil.net_io_counters(pernic=True).items():
         if _is_ignored_interface(interface):
             continue
         rx_bytes += counters.bytes_recv
         tx_bytes += counters.bytes_sent
-        rx_packets += counters.packets_recv
-        tx_packets += counters.packets_sent
-        rx_errors += counters.errin
-        tx_errors += counters.errout
-        rx_dropped += counters.dropin
-        tx_dropped += counters.dropout
 
-    return (
-        AGGREGATE_INTERFACE_NAME,
-        (rx_bytes, tx_bytes, rx_packets, tx_packets, rx_errors, tx_errors, rx_dropped, tx_dropped),
-    )
+    return AGGREGATE_INTERFACE_NAME, (rx_bytes, tx_bytes)
 
 
-def _collect_network_totals(network_interface: str, network_interface_strategy: str) -> tuple[str, tuple[int, int, int, int, int, int, int, int]]:
+def _collect_network_totals(network_interface: str, network_interface_strategy: str) -> tuple[str, tuple[int, int]]:
     if network_interface:
         interface_name, counters = _counters_for_interface(network_interface)
-        return (
-            interface_name,
-            (
-                counters.bytes_recv,
-                counters.bytes_sent,
-                counters.packets_recv,
-                counters.packets_sent,
-                counters.errin,
-                counters.errout,
-                counters.dropin,
-                counters.dropout,
-            ),
-        )
+        return interface_name, (counters.bytes_recv, counters.bytes_sent)
 
     if network_interface_strategy == "aggregate":
         return _aggregate_counters()
@@ -148,19 +117,7 @@ def _collect_network_totals(network_interface: str, network_interface_strategy: 
         detected_interface = _detect_primary_interface()
         if detected_interface:
             interface_name, counters = _counters_for_interface(detected_interface)
-            return (
-                interface_name,
-                (
-                    counters.bytes_recv,
-                    counters.bytes_sent,
-                    counters.packets_recv,
-                    counters.packets_sent,
-                    counters.errin,
-                    counters.errout,
-                    counters.dropin,
-                    counters.dropout,
-                ),
-            )
+            return interface_name, (counters.bytes_recv, counters.bytes_sent)
 
     return _aggregate_counters()
 
@@ -168,11 +125,11 @@ def _collect_network_totals(network_interface: str, network_interface_strategy: 
 def collect_metrics(network_interface: str, network_interface_strategy: str) -> CollectedMetrics:
     memory = psutil.virtual_memory()
     disk = psutil.disk_usage("/")
-    (
-        selected_network_interface,
-        (rx_bytes, tx_bytes, rx_packets, tx_packets, rx_errors, tx_errors, rx_dropped, tx_dropped),
-    ) = _collect_network_totals(network_interface, network_interface_strategy)
-    cpu_percent = psutil.cpu_percent(interval=0.2)
+    selected_network_interface, (rx_bytes, tx_bytes) = _collect_network_totals(
+        network_interface,
+        network_interface_strategy,
+    )
+    cpu_percent = psutil.cpu_percent(interval=None)
     memory_percent = memory.percent
     disk_percent = disk.percent
     load_avg_1m = os.getloadavg()[0] if hasattr(os, "getloadavg") else 0.0
@@ -190,11 +147,5 @@ def collect_metrics(network_interface: str, network_interface_strategy: str) -> 
         network_interface=selected_network_interface,
         rx_bytes=rx_bytes,
         tx_bytes=tx_bytes,
-        rx_packets=rx_packets,
-        tx_packets=tx_packets,
-        rx_errors=rx_errors,
-        tx_errors=tx_errors,
-        rx_dropped=rx_dropped,
-        tx_dropped=tx_dropped,
         uptime_seconds=uptime_seconds,
     )

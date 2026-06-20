@@ -21,12 +21,6 @@ from aiogram.types import (
 
 from proxypulse.core.config import get_settings
 from proxypulse.core.db import SessionLocal, init_db
-from proxypulse.services.alerts import (
-    format_alert_message,
-    list_pending_notifications,
-    mark_notified,
-    mark_stale_nodes_offline,
-)
 from proxypulse.services.dashboard import build_node_detail_summary, build_nodes_dashboard
 from proxypulse.services.cloudflare_dns import (
     SUPPORTED_DNS_RECORD_TYPES,
@@ -41,6 +35,7 @@ from proxypulse.services.nodes import (
     delete_node_by_name,
     get_node_by_name,
     list_nodes,
+    mark_stale_nodes_offline,
 )
 from proxypulse.services.quota import (
     QuotaServiceError,
@@ -589,12 +584,6 @@ def format_resource_usage(used_bytes: int | None, total_bytes: int | None, perce
     return "暂无"
 
 
-def format_network_counter_pair(left_value: int | None, right_value: int | None) -> str:
-    if left_value is None and right_value is None:
-        return "暂无"
-    return f"{format_integer_value(left_value)} / {format_integer_value(right_value)}"
-
-
 def html_code(value: str) -> str:
     return f"<code>{html.escape(value)}</code>"
 
@@ -690,8 +679,6 @@ def render_node_card(card) -> str:
         "<b>套餐</b>",
         *render_overview_quota_html(card.quota_status),
     ]
-    if card.active_alert_count:
-        body_lines.insert(1, f"⚠️ 活动告警 {html_code(str(card.active_alert_count))}")
     title = (
         f"<b>🖥️ {html.escape(node.name)}</b>"
         f"  {format_status_label(node)} · {html.escape(format_relative_time(node.last_seen_at))}"
@@ -824,8 +811,6 @@ async def render_node_detail(node_name: str) -> tuple[str, InlineKeyboardMarkup]
             [
                 f"实时 ↓ {html_code(format_rate_value(detail_summary.current_rate.rx_bps))} · ↑ {html_code(format_rate_value(detail_summary.current_rate.tx_bps))}",
                 f"累计 ↓ {html_code(format_byte_value(node.latest_rx_bytes))} · ↑ {html_code(format_byte_value(node.latest_tx_bytes))}",
-                f"数据包 收 {html_code(format_integer_value(node.latest_rx_packets))} · 发 {html_code(format_integer_value(node.latest_tx_packets))}",
-                f"错/丢 RX {html_code(format_network_counter_pair(node.latest_rx_errors, node.latest_rx_dropped))} · TX {html_code(format_network_counter_pair(node.latest_tx_errors, node.latest_tx_dropped))}",
             ],
         ),
         html_card(
@@ -854,7 +839,6 @@ async def render_node_delete_confirm(node_name: str) -> tuple[str, InlineKeyboar
             "影响范围",
             [
                 "• 历史指标快照",
-                "• 告警记录",
                 "• 流量套餐配置",
                 "",
                 "Agent 令牌将立即失效，仍在运行的 Agent 会上报失败。",
@@ -1736,24 +1720,17 @@ async def maybe_send_daily_report(bot: Bot) -> None:
         await session.commit()
 
 
-async def alert_loop(bot: Bot) -> None:
+async def maintenance_loop(bot: Bot) -> None:
     while True:
         try:
             async with SessionLocal() as session:
                 await mark_stale_nodes_offline(session)
-                await session.flush()
-                pending = await list_pending_notifications(session, limit=20)
-                for alert, node in pending:
-                    text = format_alert_message(alert, node)
-                    for admin_id in settings.admin_telegram_ids:
-                        await bot.send_message(admin_id, text, parse_mode="HTML")
-                    mark_notified(alert)
                 await session.commit()
             await maybe_send_daily_report(bot)
         except Exception:
-            logger.exception("Alert loop iteration failed.")
+            logger.exception("Maintenance loop iteration failed.")
 
-        await asyncio.sleep(settings.alert_scan_interval_seconds)
+        await asyncio.sleep(settings.maintenance_interval_seconds)
 
 
 async def run_polling() -> None:
@@ -1788,12 +1765,12 @@ async def run_polling() -> None:
             BotCommand(command="quota_clear", description="清除节点流量套餐"),
         ]
     )
-    alert_task = asyncio.create_task(alert_loop(bot))
+    maintenance_task = asyncio.create_task(maintenance_loop(bot))
     try:
         await dispatcher.start_polling(bot)
     finally:
-        alert_task.cancel()
-        await asyncio.gather(alert_task, return_exceptions=True)
+        maintenance_task.cancel()
+        await asyncio.gather(maintenance_task, return_exceptions=True)
 
 
 def main() -> None:

@@ -4,7 +4,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from proxypulse.core.models import AlertStatus, NodeStatus
+from proxypulse.core.models import NodeStatus
 
 
 class NodeEnrollResponse(BaseModel):
@@ -44,12 +44,6 @@ class MetricSnapshotIn(BaseModel):
     network_interface: str | None = None
     rx_bytes: int
     tx_bytes: int
-    rx_packets: int | None = None
-    tx_packets: int | None = None
-    rx_errors: int | None = None
-    tx_errors: int | None = None
-    rx_dropped: int | None = None
-    tx_dropped: int | None = None
     uptime_seconds: int
 
 
@@ -76,31 +70,10 @@ class NodeSummary(BaseModel):
     latest_network_interface: str | None
     latest_rx_bytes: int | None
     latest_tx_bytes: int | None
-    latest_rx_packets: int | None
-    latest_tx_packets: int | None
-    latest_rx_errors: int | None
-    latest_tx_errors: int | None
-    latest_rx_dropped: int | None
-    latest_tx_dropped: int | None
 
 
 class NodeDetail(NodeSummary):
     ips: list[str]
-
-
-class AlertSummary(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    alert_key: str
-    metric_name: str
-    status: AlertStatus
-    severity: str
-    summary: str
-    current_value: float | None
-    threshold_value: float | None
-    triggered_at: datetime
-    resolved_at: datetime | None
 
 
 class ExternalNetworkIdentityRequest(BaseModel):

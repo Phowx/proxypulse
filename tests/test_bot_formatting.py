@@ -112,16 +112,9 @@ class BotFormattingTests(TestCase):
             latest_disk_total_bytes=None,
             latest_rx_bytes=None,
             latest_tx_bytes=None,
-            latest_rx_packets=None,
-            latest_tx_packets=None,
-            latest_rx_errors=None,
-            latest_tx_errors=None,
-            latest_rx_dropped=None,
-            latest_tx_dropped=None,
         )
         card = NodeCardSummary(
             node=node,
-            active_alert_count=2,
             trend_1h=NodeTrendSummary(
                 sample_count=0,
                 avg_cpu_percent=None,
@@ -156,7 +149,7 @@ class BotFormattingTests(TestCase):
         self.assertNotIn("网络流量", rendered)
         self.assertNotIn("24h", rendered)
         self.assertNotIn("数据包", rendered)
-        self.assertIn("活动告警 <code>2</code>", rendered)
+        self.assertNotIn("活动告警", rendered)
         self.assertIn("<blockquote>", rendered)
         self.assertIn("📦 套餐未配置", rendered)
 

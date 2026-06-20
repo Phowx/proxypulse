@@ -3,17 +3,16 @@
 ProxyPulse 是一个以 Telegram 为核心入口的私人代理节点监控工具，当前由三个进程组成：
 
 - `proxypulse.api`：控制面，负责接收 Agent 注册、心跳和指标上报。
-- `proxypulse.bot`：Telegram Bot，负责节点接入、查询、告警通知和日常操作。
+- `proxypulse.bot`：Telegram Bot，负责节点接入、查询、日报推送和日常操作。
 - `proxypulse.agent`：部署在每台节点上的轻量采集器。
 
 ## 已实现功能
 
 - 在 Telegram 中生成一次性接入令牌。
 - Agent 注册后分配长期 `agent token`。
-- 心跳上报和资源指标快照。
+- Agent 启动时同步主机身份，运行期间上报精简资源指标快照。
 - Telegram 内通过原生富文本卡片查看节点概览与详情、流量报表、套餐状态、诊断结果、DNS 管理和接入信息。
-- CPU、内存、磁盘资源阈值告警。
-- 节点离线检测，以及离线/恢复通知。
+- 节点在线状态检测（仅用于界面状态，不发送告警）。
 - 最近 24 小时流量汇总和每日流量日报。
 - 按节点配置流量套餐，支持按月重置、按固定天数重置和手动校准已用流量。
 - 在 Telegram 中管理 Cloudflare DNS，支持查看、创建、更新和删除 `A` / `AAAA` / `CNAME` / `TXT` 记录。
@@ -86,7 +85,7 @@ python -m proxypulse.agent
 - `/enroll <node_name>`：创建或刷新一次性接入令牌。
 - `/nodes`：在同一概览中以富文本卡片查看所有已接入节点的资源状态、趋势和套餐状态。
 - `/node <node_name>`：单独查看某个节点详情，保留用于命令直达。
-- `/delete_node <node_name>`：删除节点，并在确认后清理其历史指标、告警和流量套餐配置。
+- `/delete_node <node_name>`：删除节点，并在确认后清理其历史指标和流量套餐配置。
 - `/traffic`：查看最近 24 小时流量汇总。
 - `/daily`：查看上一自然日流量日报。
 - `/daily_time [HH:MM]`：查看或设置自动推送日报的时间。
@@ -98,21 +97,17 @@ python -m proxypulse.agent
 - `/quota_calibrate <node_name> <usedGiB>`：手动校准本周期已用流量。
 - `/quota_clear <node_name>`：清除节点流量套餐配置。
 
-## 告警行为
+## 节点状态
 
-- 当 CPU、内存、磁盘使用率超过阈值时，会触发资源告警。
-- 当节点超过 `PROXYPULSE_OFFLINE_AFTER_SECONDS` 未上报时，会触发离线告警。
-- 告警触发和恢复都会通过 Telegram 发送给所有管理员。
-- Bot 内不再提供单独的“告警中心”查看页。
+- 指标上报会同时刷新节点在线时间，不再每轮单独发送心跳请求。
+- 当节点超过 `PROXYPULSE_OFFLINE_AFTER_SECONDS` 未上报时，只在界面中标记为离线，不发送 Telegram 告警。
+- Agent 只采集 CPU、内存、磁盘、负载、运行时间、网卡和收发字节；不再采集数据包数、错包和丢包，也不再保存重复的原始 JSON 快照。
+- 新安装的 Agent 默认每 30 秒上报一次；已有部署可将 `PROXYPULSE_POLL_INTERVAL_SECONDS` 调整为 `30`。
 
 关键环境变量：
 
-- `PROXYPULSE_RESOURCE_ALERTS_ENABLED`
-- `PROXYPULSE_CPU_ALERT_THRESHOLD`
-- `PROXYPULSE_MEMORY_ALERT_THRESHOLD`
-- `PROXYPULSE_DISK_ALERT_THRESHOLD`
 - `PROXYPULSE_OFFLINE_AFTER_SECONDS`
-- `PROXYPULSE_ALERT_SCAN_INTERVAL_SECONDS`
+- `PROXYPULSE_MAINTENANCE_INTERVAL_SECONDS`
 - `PROXYPULSE_REPORT_TIMEZONE`
 - `PROXYPULSE_DAILY_REPORT_HOUR`
 - `PROXYPULSE_DAILY_REPORT_MINUTE`
@@ -155,12 +150,6 @@ python -m proxypulse.agent
   - `/dns_zones`
 - 当前支持的记录类型：`A` / `AAAA` / `CNAME` / `TXT`
 - 所有新增、更新、删除操作都会先展示预览，再要求确认。
-
-## 资源告警开关
-
-- `PROXYPULSE_RESOURCE_ALERTS_ENABLED=true` 时，会启用 CPU、内存、磁盘阈值告警。
-- 设置为 `false` 后，会保留离线告警，但不再生成新的资源阈值告警。
-- 关闭后，当前处于活动状态的 CPU、内存、磁盘告警会在下一次指标上报时自动恢复关闭。
 
 ## 使用 `systemd` 部署
 

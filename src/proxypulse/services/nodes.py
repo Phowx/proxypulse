@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-import json
 import secrets
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from proxypulse.core.config import get_settings
 from proxypulse.core.models import MetricSnapshot, Node, NodeStatus
 from proxypulse.core.schemas import AgentRegisterRequest, HeartbeatRequest, MetricSnapshotIn
-from proxypulse.services.alerts import resolve_offline_alert, sync_threshold_alerts
+
+settings = get_settings()
 
 
 class NodeServiceError(RuntimeError):
@@ -82,7 +83,6 @@ async def record_heartbeat(session: AsyncSession, node: Node, payload: Heartbeat
     node.last_seen_at = datetime.now(UTC)
     node.is_online = True
     node.status = NodeStatus.online
-    await resolve_offline_alert(session, node)
     await session.commit()
     await session.refresh(node)
     return node
@@ -103,14 +103,7 @@ async def record_metrics(session: AsyncSession, node: Node, payload: MetricSnaps
         network_interface=payload.network_interface,
         rx_bytes=payload.rx_bytes,
         tx_bytes=payload.tx_bytes,
-        rx_packets=payload.rx_packets,
-        tx_packets=payload.tx_packets,
-        rx_errors=payload.rx_errors,
-        tx_errors=payload.tx_errors,
-        rx_dropped=payload.rx_dropped,
-        tx_dropped=payload.tx_dropped,
         uptime_seconds=payload.uptime_seconds,
-        raw_payload=json.dumps(payload.model_dump()),
     )
     session.add(snapshot)
 
@@ -130,20 +123,6 @@ async def record_metrics(session: AsyncSession, node: Node, payload: MetricSnaps
     node.latest_network_interface = payload.network_interface
     node.latest_rx_bytes = payload.rx_bytes
     node.latest_tx_bytes = payload.tx_bytes
-    node.latest_rx_packets = payload.rx_packets
-    node.latest_tx_packets = payload.tx_packets
-    node.latest_rx_errors = payload.rx_errors
-    node.latest_tx_errors = payload.tx_errors
-    node.latest_rx_dropped = payload.rx_dropped
-    node.latest_tx_dropped = payload.tx_dropped
-    await resolve_offline_alert(session, node)
-    await sync_threshold_alerts(
-        session,
-        node,
-        cpu_percent=payload.cpu_percent,
-        memory_percent=payload.memory_percent,
-        disk_percent=payload.disk_percent,
-    )
 
     await session.commit()
     await session.refresh(snapshot)
@@ -153,6 +132,25 @@ async def record_metrics(session: AsyncSession, node: Node, payload: MetricSnaps
 async def list_nodes(session: AsyncSession) -> list[Node]:
     result = await session.execute(select(Node).order_by(Node.name.asc()))
     return list(result.scalars().all())
+
+
+async def mark_stale_nodes_offline(session: AsyncSession) -> int:
+    result = await session.execute(select(Node).where(Node.agent_token.is_not(None)))
+    now = datetime.now(UTC)
+    changed = 0
+    for node in result.scalars().all():
+        if node.last_seen_at is None:
+            continue
+        last_seen_at = node.last_seen_at
+        if last_seen_at.tzinfo is None:
+            last_seen_at = last_seen_at.replace(tzinfo=UTC)
+        if now - last_seen_at <= timedelta(seconds=settings.offline_after_seconds):
+            continue
+        if node.is_online or node.status != NodeStatus.offline:
+            node.is_online = False
+            node.status = NodeStatus.offline
+            changed += 1
+    return changed
 
 
 async def get_node_by_name(session: AsyncSession, name: str) -> Node | None:
