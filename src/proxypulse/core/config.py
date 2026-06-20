@@ -75,6 +75,8 @@ class Settings(BaseSettings):
         if not isinstance(parsed, dict):
             raise ValueError("PROXYPULSE_CLOUDFLARE_ZONES must be a JSON object.")
         zones: dict[str, CloudflareZoneConfig] = {}
+        zone_keys_by_id: dict[str, str] = {}
+        zone_keys_by_name: dict[str, str] = {}
         for key, value in parsed.items():
             if not isinstance(key, str) or not key.strip():
                 raise ValueError("PROXYPULSE_CLOUDFLARE_ZONES keys must be non-empty strings.")
@@ -84,6 +86,22 @@ class Settings(BaseSettings):
             zone_name = str(value.get("zone_name", "")).strip()
             if not zone_id or not zone_name:
                 raise ValueError(f"Cloudflare zone '{key}' must include zone_id and zone_name.")
+            previous_id_key = zone_keys_by_id.get(zone_id)
+            if previous_id_key is not None:
+                previous_zone_name = zones[previous_id_key].zone_name
+                raise ValueError(
+                    f"Zone 配置重复：{previous_zone_name} 和 {zone_name} 使用了同一个 zone_id；"
+                    "请修正 PROXYPULSE_CLOUDFLARE_ZONES。"
+                )
+            normalized_name = zone_name.rstrip(".").casefold()
+            previous_name_key = zone_keys_by_name.get(normalized_name)
+            if previous_name_key is not None:
+                raise ValueError(
+                    f"Zone 配置重复：{zone_name} 被配置了多次；"
+                    "请修正 PROXYPULSE_CLOUDFLARE_ZONES。"
+                )
+            zone_keys_by_id[zone_id] = key
+            zone_keys_by_name[normalized_name] = key
             zones[key] = CloudflareZoneConfig(key=key, zone_id=zone_id, zone_name=zone_name)
         return zones
 

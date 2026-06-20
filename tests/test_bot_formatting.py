@@ -8,13 +8,17 @@ from unittest.mock import AsyncMock, patch
 from proxypulse.bot import main as bot_main
 from proxypulse.bot.main import (
     build_dashboard_menu_text,
+    build_dns_home_keyboard,
     build_node_detail_keyboard,
     build_node_list_keyboard,
     dashboard_button_rows,
     render_dns_record_text,
+    render_dns_zone_text,
     render_node_card,
     render_overview_quota_html,
 )
+from proxypulse.core.config import CloudflareZoneConfig
+from proxypulse.services.cloudflare_dns import CloudflareDNSService
 from proxypulse.services.dashboard import NodeCardSummary, NodeTrendSummary
 from proxypulse.services.quota import QuotaStatus
 
@@ -45,6 +49,27 @@ class BotFormattingTests(TestCase):
         self.assertIn("api&lt;prod&gt;", rendered)
         self.assertIn("1.2.3.4&amp;backup", rendered)
         self.assertIn("owner=&quot;ops&quot;", rendered)
+
+    def test_dns_home_hides_internal_keys_but_keeps_unique_callbacks(self) -> None:
+        service = CloudflareDNSService(
+            api_token="token",
+            zones={
+                "domain2": CloudflareZoneConfig("domain2", "zone-2", "second.example"),
+                "domain3": CloudflareZoneConfig("domain3", "zone-3", "third.example"),
+            },
+        )
+
+        keyboard = build_dns_home_keyboard(service)
+
+        self.assertEqual(
+            [row[0].text for row in keyboard.inline_keyboard[:2]],
+            ["second.example", "third.example"],
+        )
+        self.assertEqual(
+            [row[0].callback_data for row in keyboard.inline_keyboard[:2]],
+            ["dns:zone:domain2", "dns:zone:domain3"],
+        )
+        self.assertNotIn("domain2", render_dns_zone_text("second.example"))
 
     def test_dashboard_button_rows_use_single_row(self) -> None:
         rows = dashboard_button_rows()

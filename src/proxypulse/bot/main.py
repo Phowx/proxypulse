@@ -206,7 +206,7 @@ def parse_dns_record_callback(data: str) -> tuple[str, str]:
 
 def build_dns_home_keyboard(service: CloudflareDNSService) -> InlineKeyboardMarkup:
     rows = [
-        [InlineKeyboardButton(text=f"{zone.zone_name} · {zone.key}", callback_data=f"{CALLBACK_DNS_ZONE_PREFIX}{zone.key}")]
+        [InlineKeyboardButton(text=zone.zone_name, callback_data=f"{CALLBACK_DNS_ZONE_PREFIX}{zone.key}")]
         for zone in service.list_configured_zones()
     ]
     rows.append([InlineKeyboardButton(text="返回菜单", callback_data=CALLBACK_SHOW_MENU)])
@@ -390,10 +390,10 @@ def render_dns_list_text(record_page: CloudflareDNSRecordPage) -> str:
     return f"<b>☁️ DNS 列表 · {html.escape(record_page.zone.zone_name)}</b>\n{html_card('记录概况', lines)}"
 
 
-def render_dns_zone_text(zone_name: str, zone_key: str) -> str:
+def render_dns_zone_text(zone_name: str) -> str:
     return (
         f"<b>☁️ DNS 管理 · {html.escape(zone_name)}</b>\n"
-        f"{html_card('Zone', [f'标识 {html_code(zone_key)}', '选择要执行的操作。'])}"
+        f"{html_card('Zone', ['选择要执行的操作。'])}"
     )
 
 
@@ -921,7 +921,7 @@ async def render_dns_home() -> tuple[str, InlineKeyboardMarkup | None]:
 async def render_dns_zone(zone_key: str) -> tuple[str, InlineKeyboardMarkup]:
     service = get_dns_service()
     zone = service.get_zone(zone_key)
-    return render_dns_zone_text(zone.zone_name, zone.key), build_dns_zone_keyboard(zone.key)
+    return render_dns_zone_text(zone.zone_name), build_dns_zone_keyboard(zone.key)
 
 
 async def render_dns_record_list(zone_key: str, *, page: int) -> tuple[str, InlineKeyboardMarkup]:
@@ -1300,7 +1300,7 @@ async def dns_zones_handler(message: Message) -> None:
     except (CloudflareServiceError, ValueError) as exc:
         await message.answer(str(exc))
         return
-    lines = [f"{html_code(zone.key)} → {html.escape(zone.zone_name)}" for zone in zones]
+    lines = [html.escape(zone.zone_name) for zone in zones]
     await message.answer(f"<b>☁️ DNS Zones</b>\n{html_card('已配置', lines)}", parse_mode="HTML")
 
 

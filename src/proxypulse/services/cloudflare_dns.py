@@ -112,7 +112,9 @@ class CloudflareDNSService:
     async def get_dns_record(self, zone_key: str, record_id: str) -> CloudflareDNSRecord:
         zone = self.get_zone(zone_key)
         payload = await self._request("GET", f"/zones/{zone.zone_id}/dns_records/{record_id}")
-        return self._parse_record(payload)
+        record = self._parse_record(payload)
+        self._ensure_record_belongs_to_zone(record, zone)
+        return record
 
     async def create_dns_record(
         self,
@@ -178,6 +180,8 @@ class CloudflareDNSService:
                 params={"page": page, "per_page": 100, "order": "name", "direction": "asc"},
             )
             page_records = [self._parse_record(item) for item in payload]
+            for record in page_records:
+                self._ensure_record_belongs_to_zone(record, zone)
             records.extend(record for record in page_records if record.type in SUPPORTED_DNS_RECORD_TYPES)
             result_info = self._last_result_info or {}
             total_pages = int(result_info.get("total_pages") or 1)
@@ -218,6 +222,17 @@ class CloudflareDNSService:
             proxied=payload.get("proxied"),
             comment=payload.get("comment"),
             modified_on=payload.get("modified_on"),
+        )
+
+    @staticmethod
+    def _ensure_record_belongs_to_zone(record: CloudflareDNSRecord, zone: CloudflareZoneConfig) -> None:
+        record_name = record.name.rstrip(".").casefold()
+        zone_name = zone.zone_name.rstrip(".").casefold()
+        if record_name == zone_name or record_name.endswith(f".{zone_name}"):
+            return
+        raise CloudflareServiceError(
+            f"Zone 配置不匹配：{zone.zone_name} 的 zone_id 返回了 {record.name}；"
+            "请检查 PROXYPULSE_CLOUDFLARE_ZONES。"
         )
 
     async def _request(

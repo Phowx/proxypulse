@@ -48,8 +48,61 @@ class CloudflareConfigTests(TestCase):
             with self.assertRaises(ValueError):
                 _ = settings.cloudflare_zones
 
+    def test_cloudflare_zones_reject_duplicate_zone_ids(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "PROXYPULSE_CLOUDFLARE_ZONES": json.dumps(
+                    {
+                        "domain2": {"zone_id": "zone-2", "zone_name": "second.example"},
+                        "domain3": {"zone_id": "zone-2", "zone_name": "third.example"},
+                    }
+                )
+            },
+            clear=False,
+        ):
+            settings = Settings()
+            with self.assertRaisesRegex(ValueError, "同一个 zone_id"):
+                _ = settings.cloudflare_zones
+
 
 class CloudflareDNSServiceTests(IsolatedAsyncioTestCase):
+    async def test_list_records_rejects_zone_id_name_mismatch(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "success": True,
+                    "result": [
+                        {
+                            "id": "rec-2",
+                            "type": "A",
+                            "name": "api.second.example",
+                            "content": "1.2.3.4",
+                            "ttl": 1,
+                            "proxied": True,
+                        }
+                    ],
+                    "result_info": {"total_pages": 1},
+                },
+            )
+
+        transport = httpx.MockTransport(handler)
+        async with httpx.AsyncClient(transport=transport) as client:
+            service = CloudflareDNSService(
+                api_token="token",
+                zones={
+                    "domain3": CloudflareZoneConfig(
+                        key="domain3",
+                        zone_id="zone-3",
+                        zone_name="third.example",
+                    )
+                },
+                client=client,
+            )
+            with self.assertRaisesRegex(CloudflareServiceError, "Zone 配置不匹配"):
+                await service.list_dns_records("domain3")
+
     async def test_list_records_and_mutations(self) -> None:
         calls: list[tuple[str, str]] = []
 

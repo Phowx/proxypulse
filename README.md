@@ -147,6 +147,8 @@ python -m proxypulse.agent
 }
 ```
 
+- 对象中的 `main` / `lab` 仅作为内部回调标识，不会显示在 Telegram；每个 Zone 必须使用唯一且与域名对应的 `zone_id`。
+
 - Telegram 入口：
   - 底部菜单中的 `DNS 管理`
   - `/dns`
