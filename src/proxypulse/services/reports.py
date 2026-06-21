@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import case, func, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from proxypulse.core.config import get_settings
@@ -19,7 +19,8 @@ class NodeTrafficSummary:
     node_name: str
     rx_bytes: int
     tx_bytes: int
-    month_used_bytes: int | None = None
+    period_used_bytes: int | None = None
+    period_start_at: datetime | None = None
     available_bytes: int | None = None
     days_until_reset: int | None = None
 
@@ -100,10 +101,33 @@ async def sum_snapshot_traffic_by_node(
     start_at: datetime,
     end_at: datetime,
     node_ids: list[str] | None = None,
+    end_inclusive: bool = True,
 ) -> dict[str, tuple[int, int]]:
     order_columns = (MetricSnapshot.created_at.asc(), MetricSnapshot.id.asc())
+    baseline_query = select(
+        MetricSnapshot.id.label("id"),
+        func.row_number()
+        .over(
+            partition_by=MetricSnapshot.node_id,
+            order_by=(MetricSnapshot.created_at.desc(), MetricSnapshot.id.desc()),
+        )
+        .label("row_number"),
+    ).where(MetricSnapshot.created_at < _db_datetime(start_at))
+    if node_ids is not None:
+        if not node_ids:
+            return {}
+        baseline_query = baseline_query.where(MetricSnapshot.node_id.in_(node_ids))
+    baseline_rows = baseline_query.subquery()
+    baseline_ids = select(baseline_rows.c.id).where(baseline_rows.c.row_number == 1)
+
+    end_condition = (
+        MetricSnapshot.created_at <= _db_datetime(end_at)
+        if end_inclusive
+        else MetricSnapshot.created_at < _db_datetime(end_at)
+    )
     ordered_query = select(
         MetricSnapshot.node_id.label("node_id"),
+        MetricSnapshot.created_at.label("created_at"),
         MetricSnapshot.rx_bytes.label("rx_bytes"),
         MetricSnapshot.tx_bytes.label("tx_bytes"),
         func.lag(MetricSnapshot.rx_bytes)
@@ -113,12 +137,15 @@ async def sum_snapshot_traffic_by_node(
         .over(partition_by=MetricSnapshot.node_id, order_by=order_columns)
         .label("previous_tx_bytes"),
     ).where(
-        MetricSnapshot.created_at >= _db_datetime(start_at),
-        MetricSnapshot.created_at <= _db_datetime(end_at),
+        or_(
+            MetricSnapshot.id.in_(baseline_ids),
+            (
+                (MetricSnapshot.created_at >= _db_datetime(start_at))
+                & end_condition
+            ),
+        )
     )
     if node_ids is not None:
-        if not node_ids:
-            return {}
         ordered_query = ordered_query.where(MetricSnapshot.node_id.in_(node_ids))
 
     ordered = ordered_query.subquery()
@@ -137,7 +164,9 @@ async def sum_snapshot_traffic_by_node(
             ordered.c.node_id,
             func.coalesce(func.sum(rx_delta), 0),
             func.coalesce(func.sum(tx_delta), 0),
-        ).group_by(ordered.c.node_id)
+        )
+        .where(ordered.c.created_at >= _db_datetime(start_at))
+        .group_by(ordered.c.node_id)
     )
     return {node_id: (int(rx_bytes), int(tx_bytes)) for node_id, rx_bytes, tx_bytes in result.all()}
 
@@ -148,12 +177,18 @@ async def summarize_traffic_window(
     title: str,
     start_at: datetime,
     end_at: datetime,
+    end_inclusive: bool = True,
 ) -> TrafficSummary:
     node_result = await session.execute(select(Node).order_by(Node.name.asc()))
     nodes = list(node_result.scalars().all())
     node_map = {node.id: node for node in nodes}
 
-    totals = await sum_snapshot_traffic_by_node(session, start_at=start_at, end_at=end_at)
+    totals = await sum_snapshot_traffic_by_node(
+        session,
+        start_at=start_at,
+        end_at=end_at,
+        end_inclusive=end_inclusive,
+    )
 
     node_summaries: list[NodeTrafficSummary] = []
     for node_id, (rx_bytes, tx_bytes) in totals.items():
@@ -195,34 +230,43 @@ async def summarize_previous_local_day(session: AsyncSession, today_local: date 
         title=f"{report_day.isoformat()} 流量日报",
         start_at=start_local.astimezone(UTC),
         end_at=end_local.astimezone(UTC),
+        end_inclusive=False,
     )
-
-    month_start_local = datetime.combine(report_day.replace(day=1), time.min, tzinfo=local_tz)
-    month_summary = await summarize_traffic_window(
-        session,
-        title=f"{report_day.strftime('%Y-%m')} 月累计流量",
-        start_at=month_start_local.astimezone(UTC),
-        end_at=end_local.astimezone(UTC),
-    )
-    month_usage_by_node = {item.node_name: item.total_bytes for item in month_summary.node_summaries}
 
     # Import locally to keep report primitives independent from quota calculations.
     from proxypulse.services.quota import days_until_reset, get_quota_status
 
+    report_end_at = end_local.astimezone(UTC)
+    report_cutoff = report_end_at - timedelta(microseconds=1)
+    month_start_at = datetime.combine(report_day.replace(day=1), time.min, tzinfo=local_tz).astimezone(UTC)
     node_result = await session.execute(select(Node).order_by(Node.name.asc()))
     nodes_by_name = {node.name: node for node in node_result.scalars().all()}
+    month_usage_by_node_id: dict[str, tuple[int, int]] | None = None
     for item in summary.node_summaries:
-        item.month_used_bytes = month_usage_by_node.get(item.node_name, 0)
         node = nodes_by_name.get(item.node_name)
         if node is None:
             continue
-        quota_status = await get_quota_status(session, node, now=end_local.astimezone(UTC))
+        quota_status = await get_quota_status(session, node, now=report_cutoff)
         if quota_status.configured:
+            item.period_used_bytes = quota_status.used_bytes
+            item.period_start_at = quota_status.period_start
             item.available_bytes = quota_status.remaining_bytes
             item.days_until_reset = days_until_reset(
                 quota_status.next_reset_at,
-                now=end_local.astimezone(UTC),
+                now=report_cutoff,
             )
+            continue
+
+        if month_usage_by_node_id is None:
+            month_usage_by_node_id = await sum_snapshot_traffic_by_node(
+                session,
+                start_at=month_start_at,
+                end_at=report_end_at,
+                end_inclusive=False,
+            )
+        rx_bytes, tx_bytes = month_usage_by_node_id.get(node.id, (0, 0))
+        item.period_used_bytes = rx_bytes + tx_bytes
+        item.period_start_at = month_start_at
     return report_day, summary
 
 
@@ -247,8 +291,16 @@ def format_traffic_summary(summary: TrafficSummary) -> str:
             f"下行 <code>{format_bytes(item.rx_bytes)}</code> · 上行 <code>{format_bytes(item.tx_bytes)}</code>",
             f"合计 <code>{format_bytes(item.total_bytes)}</code>",
         ]
-        if item.month_used_bytes is not None:
-            item_lines.append(f"本月累计 <code>{format_bytes(item.month_used_bytes)}</code>")
+        if item.period_used_bytes is not None:
+            period_start_text = (
+                item.period_start_at.astimezone(_local_tz()).strftime("%m-%d %H:%M")
+                if item.period_start_at is not None
+                else "未知"
+            )
+            item_lines.append(
+                f"本期累计 <code>{format_bytes(item.period_used_bytes)}</code>"
+                f" · <code>{period_start_text}</code> 起"
+            )
             item_lines.append(
                 f"套餐可用 <code>{format_bytes(item.available_bytes)}</code>"
                 if item.available_bytes is not None

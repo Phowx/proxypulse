@@ -165,3 +165,71 @@ class DashboardTests(IsolatedAsyncioTestCase):
         self.assertEqual(traffic_map[node.id].tx_bytes, 2_900)
         self.assertEqual(summary.node_summaries[0].rx_bytes, 5_300)
         self.assertEqual(summary.node_summaries[0].tx_bytes, 2_900)
+
+    async def test_traffic_window_uses_prior_baseline_and_excludes_end_boundary(self) -> None:
+        start_at = datetime(2026, 6, 10, 0, 0, tzinfo=timezone.utc)
+        end_at = start_at + timedelta(days=1)
+        async with self.session_factory() as session:
+            node = Node(name="tokyo", status=NodeStatus.online, is_online=True, agent_token="token")
+            session.add(node)
+            await session.flush()
+            session.add_all(
+                [
+                    MetricSnapshot(
+                        node_id=node.id,
+                        cpu_percent=10.0,
+                        memory_percent=20.0,
+                        disk_percent=30.0,
+                        load_avg_1m=0.1,
+                        rx_bytes=1_000,
+                        tx_bytes=500,
+                        uptime_seconds=100,
+                        created_at=start_at - timedelta(minutes=1),
+                    ),
+                    MetricSnapshot(
+                        node_id=node.id,
+                        cpu_percent=10.0,
+                        memory_percent=20.0,
+                        disk_percent=30.0,
+                        load_avg_1m=0.1,
+                        rx_bytes=1_300,
+                        tx_bytes=700,
+                        uptime_seconds=160,
+                        created_at=start_at + timedelta(minutes=1),
+                    ),
+                    MetricSnapshot(
+                        node_id=node.id,
+                        cpu_percent=10.0,
+                        memory_percent=20.0,
+                        disk_percent=30.0,
+                        load_avg_1m=0.1,
+                        rx_bytes=1_800,
+                        tx_bytes=1_000,
+                        uptime_seconds=220,
+                        created_at=start_at + timedelta(hours=12),
+                    ),
+                    MetricSnapshot(
+                        node_id=node.id,
+                        cpu_percent=10.0,
+                        memory_percent=20.0,
+                        disk_percent=30.0,
+                        load_avg_1m=0.1,
+                        rx_bytes=2_800,
+                        tx_bytes=1_500,
+                        uptime_seconds=280,
+                        created_at=end_at,
+                    ),
+                ]
+            )
+            await session.commit()
+
+            summary = await summarize_traffic_window(
+                session,
+                title="test",
+                start_at=start_at,
+                end_at=end_at,
+                end_inclusive=False,
+            )
+
+        self.assertEqual(summary.node_summaries[0].rx_bytes, 800)
+        self.assertEqual(summary.node_summaries[0].tx_bytes, 500)

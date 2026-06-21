@@ -120,6 +120,19 @@ async def _find_first_snapshot_in_window(session: AsyncSession, node_id: str, st
     return result.scalar_one_or_none()
 
 
+async def _find_last_snapshot_before(session: AsyncSession, node_id: str, start_at: datetime) -> MetricSnapshot | None:
+    result = await session.execute(
+        select(MetricSnapshot)
+        .where(
+            MetricSnapshot.node_id == node_id,
+            MetricSnapshot.created_at < _db_datetime(start_at),
+        )
+        .order_by(MetricSnapshot.created_at.desc(), MetricSnapshot.id.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
 async def _sum_total_usage_in_window(
     session: AsyncSession,
     node_id: str,
@@ -179,30 +192,40 @@ async def get_quota_status(session: AsyncSession, node: Node, now: datetime | No
             calibration_bytes=None,
         )
 
-    period_start, next_reset_at, cycle_description = _compute_period_bounds(node, now=now)
+    reference_now = _ensure_aware(now or datetime.now(UTC))
+    period_start, next_reset_at, cycle_description = _compute_period_bounds(node, now=reference_now)
+    # The window query uses an exclusive upper bound. Advance by one database
+    # timestamp tick so a snapshot recorded exactly at ``reference_now`` is
+    # included, while never crossing the quota reset boundary.
+    usage_end_at = min(reference_now + timedelta(microseconds=1), next_reset_at)
     base_usage = 0
     delta_baseline_total: int | None = None
     delta_start_at = period_start
 
     if node.traffic_quota_calibrated_at is not None:
         calibrated_at = _ensure_aware(node.traffic_quota_calibrated_at)
-        if calibrated_at >= period_start:
+        if period_start <= calibrated_at <= reference_now:
             base_usage = node.traffic_quota_calibrated_usage_bytes or 0
             delta_baseline_total = node.traffic_quota_calibrated_total_bytes
             delta_start_at = calibrated_at
 
-    if base_usage == 0:
-        first_snapshot = await _find_first_snapshot_in_window(session, node.id, period_start, next_reset_at)
-        if first_snapshot is not None:
-            delta_baseline_total = first_snapshot.rx_bytes + first_snapshot.tx_bytes
+    if delta_baseline_total is None:
+        baseline_snapshot = await _find_last_snapshot_before(session, node.id, delta_start_at)
+        if baseline_snapshot is None:
+            baseline_snapshot = await _find_first_snapshot_in_window(session, node.id, delta_start_at, usage_end_at)
+        if baseline_snapshot is not None:
+            delta_baseline_total = baseline_snapshot.rx_bytes + baseline_snapshot.tx_bytes
 
-    used_bytes = base_usage + await _sum_total_usage_in_window(
-        session,
-        node.id,
-        delta_start_at,
-        next_reset_at,
-        baseline_total=delta_baseline_total,
-    )
+    delta_usage = 0
+    if usage_end_at > delta_start_at:
+        delta_usage = await _sum_total_usage_in_window(
+            session,
+            node.id,
+            delta_start_at,
+            usage_end_at,
+            baseline_total=delta_baseline_total,
+        )
+    used_bytes = base_usage + delta_usage
     remaining_bytes = max(node.traffic_quota_limit_bytes - used_bytes, 0)
     percent_used = 0.0 if node.traffic_quota_limit_bytes == 0 else (used_bytes / node.traffic_quota_limit_bytes) * 100
     return QuotaStatus(
