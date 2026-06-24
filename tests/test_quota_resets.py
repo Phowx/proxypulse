@@ -150,3 +150,65 @@ class QuotaResetTests(IsolatedAsyncioTestCase):
             status = await get_quota_status(session, node, now=now)
 
         self.assertEqual(status.used_bytes, 3_000)
+
+    async def test_quota_status_ignores_interface_switch_absolute_counters(self) -> None:
+        now = datetime(2026, 6, 24, 0, 0, tzinfo=timezone.utc)
+        async with self.session_factory() as session:
+            node = Node(
+                name="lagia",
+                status=NodeStatus.online,
+                is_online=True,
+                agent_token="token",
+                traffic_quota_limit_bytes=100_000,
+                traffic_quota_cycle_type=TrafficQuotaCycle.interval_days,
+                traffic_quota_interval_days=30,
+                traffic_quota_anchor_at=now - timedelta(hours=2),
+            )
+            session.add(node)
+            await session.flush()
+            session.add_all(
+                [
+                    MetricSnapshot(
+                        node_id=node.id,
+                        cpu_percent=10.0,
+                        memory_percent=20.0,
+                        disk_percent=30.0,
+                        load_avg_1m=0.1,
+                        network_interface="aggregate",
+                        rx_bytes=90_000,
+                        tx_bytes=80_000,
+                        uptime_seconds=100_000,
+                        created_at=now - timedelta(hours=2, minutes=1),
+                    ),
+                    MetricSnapshot(
+                        node_id=node.id,
+                        cpu_percent=10.0,
+                        memory_percent=20.0,
+                        disk_percent=30.0,
+                        load_avg_1m=0.1,
+                        network_interface="eth0",
+                        rx_bytes=52_000,
+                        tx_bytes=47_000,
+                        uptime_seconds=100_060,
+                        created_at=now - timedelta(hours=1),
+                    ),
+                    MetricSnapshot(
+                        node_id=node.id,
+                        cpu_percent=10.0,
+                        memory_percent=20.0,
+                        disk_percent=30.0,
+                        load_avg_1m=0.1,
+                        network_interface="eth0",
+                        rx_bytes=52_800,
+                        tx_bytes=47_500,
+                        uptime_seconds=100_120,
+                        created_at=now,
+                    ),
+                ]
+            )
+            await session.commit()
+
+            status = await get_quota_status(session, node, now=now)
+
+        self.assertEqual(status.used_bytes, 1_300)
+        self.assertEqual(status.remaining_bytes, 98_700)

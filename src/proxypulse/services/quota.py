@@ -133,6 +133,23 @@ async def _find_last_snapshot_before(session: AsyncSession, node_id: str, start_
     return result.scalar_one_or_none()
 
 
+async def _find_last_snapshot_at_or_before(
+    session: AsyncSession,
+    node_id: str,
+    end_at: datetime,
+) -> MetricSnapshot | None:
+    result = await session.execute(
+        select(MetricSnapshot)
+        .where(
+            MetricSnapshot.node_id == node_id,
+            MetricSnapshot.created_at <= _db_datetime(end_at),
+        )
+        .order_by(MetricSnapshot.created_at.desc(), MetricSnapshot.id.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
 async def _sum_total_usage_in_window(
     session: AsyncSession,
     node_id: str,
@@ -140,13 +157,28 @@ async def _sum_total_usage_in_window(
     end_at: datetime,
     *,
     baseline_total: int | None = None,
+    baseline_interface: str | None = None,
+    baseline_uptime: int | None = None,
 ) -> int:
     current_total = (MetricSnapshot.rx_bytes + MetricSnapshot.tx_bytes).label("current_total")
+    previous_interface = func.lag(MetricSnapshot.network_interface).over(
+        order_by=(MetricSnapshot.created_at.asc(), MetricSnapshot.id.asc())
+    ).label("previous_interface")
     previous_total = func.lag(MetricSnapshot.rx_bytes + MetricSnapshot.tx_bytes).over(
         order_by=(MetricSnapshot.created_at.asc(), MetricSnapshot.id.asc())
     ).label("previous_total")
+    previous_uptime = func.lag(MetricSnapshot.uptime_seconds).over(
+        order_by=(MetricSnapshot.created_at.asc(), MetricSnapshot.id.asc())
+    ).label("previous_uptime")
     ordered = (
-        select(current_total, previous_total)
+        select(
+            current_total,
+            MetricSnapshot.network_interface.label("network_interface"),
+            MetricSnapshot.uptime_seconds.label("uptime_seconds"),
+            previous_interface,
+            previous_total,
+            previous_uptime,
+        )
         .where(
             MetricSnapshot.node_id == node_id,
             MetricSnapshot.created_at >= _db_datetime(start_at),
@@ -158,12 +190,27 @@ async def _sum_total_usage_in_window(
     if baseline_total is None:
         first_delta = 0
     else:
-        first_delta = case(
-            (ordered.c.current_total >= baseline_total, ordered.c.current_total - baseline_total),
-            else_=ordered.c.current_total,
+        first_conditions = [
+            (
+                func.coalesce(ordered.c.network_interface, "") != (baseline_interface or ""),
+                0,
+            ),
+        ]
+        if baseline_uptime is not None:
+            first_conditions.append((ordered.c.uptime_seconds < baseline_uptime, ordered.c.current_total))
+        first_conditions.append(
+            (ordered.c.current_total >= baseline_total, ordered.c.current_total - baseline_total)
         )
+        first_delta = case(*first_conditions, else_=ordered.c.current_total)
+    interface_changed = func.coalesce(ordered.c.network_interface, "") != func.coalesce(
+        ordered.c.previous_interface,
+        "",
+    )
+    host_restarted = ordered.c.uptime_seconds < ordered.c.previous_uptime
     delta = case(
         (ordered.c.previous_total.is_(None), first_delta),
+        (interface_changed, 0),
+        (host_restarted, ordered.c.current_total),
         (
             ordered.c.current_total >= ordered.c.previous_total,
             ordered.c.current_total - ordered.c.previous_total,
@@ -200,6 +247,8 @@ async def get_quota_status(session: AsyncSession, node: Node, now: datetime | No
     usage_end_at = min(reference_now + timedelta(microseconds=1), next_reset_at)
     base_usage = 0
     delta_baseline_total: int | None = None
+    delta_baseline_interface: str | None = None
+    delta_baseline_uptime: int | None = None
     delta_start_at = period_start
 
     if node.traffic_quota_calibrated_at is not None:
@@ -208,6 +257,10 @@ async def get_quota_status(session: AsyncSession, node: Node, now: datetime | No
             base_usage = node.traffic_quota_calibrated_usage_bytes or 0
             delta_baseline_total = node.traffic_quota_calibrated_total_bytes
             delta_start_at = calibrated_at
+            calibration_snapshot = await _find_last_snapshot_at_or_before(session, node.id, calibrated_at)
+            if calibration_snapshot is not None:
+                delta_baseline_interface = calibration_snapshot.network_interface
+                delta_baseline_uptime = calibration_snapshot.uptime_seconds
 
     if delta_baseline_total is None:
         baseline_snapshot = await _find_last_snapshot_before(session, node.id, delta_start_at)
@@ -215,6 +268,8 @@ async def get_quota_status(session: AsyncSession, node: Node, now: datetime | No
             baseline_snapshot = await _find_first_snapshot_in_window(session, node.id, delta_start_at, usage_end_at)
         if baseline_snapshot is not None:
             delta_baseline_total = baseline_snapshot.rx_bytes + baseline_snapshot.tx_bytes
+            delta_baseline_interface = baseline_snapshot.network_interface
+            delta_baseline_uptime = baseline_snapshot.uptime_seconds
 
     delta_usage = 0
     if usage_end_at > delta_start_at:
@@ -224,6 +279,8 @@ async def get_quota_status(session: AsyncSession, node: Node, now: datetime | No
             delta_start_at,
             usage_end_at,
             baseline_total=delta_baseline_total,
+            baseline_interface=delta_baseline_interface,
+            baseline_uptime=delta_baseline_uptime,
         )
     used_bytes = base_usage + delta_usage
     remaining_bytes = max(node.traffic_quota_limit_bytes - used_bytes, 0)

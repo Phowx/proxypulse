@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from proxypulse.core.config import get_settings
 from proxypulse.core.models import MetricSnapshot, Node
-from proxypulse.services.reports import counter_delta, format_bytes, sum_snapshot_traffic_by_node
+from proxypulse.services.reports import contextual_counter_delta, format_bytes, sum_snapshot_traffic_by_node
 
 AGGREGATE_INTERFACE_NAME = "aggregate"
 settings = get_settings()
@@ -128,6 +128,7 @@ async def build_traffic_diagnosis(
             MetricSnapshot.network_interface,
             MetricSnapshot.rx_bytes,
             MetricSnapshot.tx_bytes,
+            MetricSnapshot.uptime_seconds,
         )
         .where(MetricSnapshot.node_id == node.id)
         .order_by(MetricSnapshot.created_at.desc())
@@ -149,8 +150,14 @@ async def build_traffic_diagnosis(
                 (_ensure_aware(snapshot.created_at) - _ensure_aware(previous_snapshot.created_at)).total_seconds(),
                 0.0,
             )
-            rx_delta = counter_delta(snapshot.rx_bytes, previous_snapshot.rx_bytes)
-            tx_delta = counter_delta(snapshot.tx_bytes, previous_snapshot.tx_bytes)
+            context = {
+                "current_interface": snapshot.network_interface,
+                "previous_interface": previous_snapshot.network_interface,
+                "current_uptime": snapshot.uptime_seconds,
+                "previous_uptime": previous_snapshot.uptime_seconds,
+            }
+            rx_delta = contextual_counter_delta(snapshot.rx_bytes, previous_snapshot.rx_bytes, **context)
+            tx_delta = contextual_counter_delta(snapshot.tx_bytes, previous_snapshot.tx_bytes, **context)
         recent_samples.append(
             RecentTrafficSample(
                 created_at=_ensure_aware(snapshot.created_at),

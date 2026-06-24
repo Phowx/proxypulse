@@ -79,12 +79,12 @@ class TrafficDiagnosisTests(IsolatedAsyncioTestCase):
             diagnosis = await build_traffic_diagnosis(session, "tokyo", now=now, recent_limit=3)
 
         self.assertEqual(diagnosis.snapshot_count_24h, 3)
-        self.assertEqual(diagnosis.traffic_24h_rx_bytes, 3_100)
-        self.assertEqual(diagnosis.traffic_24h_tx_bytes, 1_700)
+        self.assertEqual(diagnosis.traffic_24h_rx_bytes, 1_500)
+        self.assertEqual(diagnosis.traffic_24h_tx_bytes, 900)
         self.assertTrue(diagnosis.uses_aggregate)
         self.assertTrue(diagnosis.has_multiple_interfaces)
         self.assertEqual(diagnosis.recent_samples[0].rx_bytes, 4_100)
-        self.assertEqual(diagnosis.recent_samples[1].rx_delta, 1_600)
+        self.assertEqual(diagnosis.recent_samples[1].rx_delta, 0)
         self.assertEqual(diagnosis.recent_samples[0].rx_delta, 1_500)
 
 

@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from proxypulse.core.config import get_settings
 from proxypulse.core.models import MetricSnapshot, Node
 from proxypulse.services.quota import QuotaStatus, get_quota_status
-from proxypulse.services.reports import counter_delta, sum_snapshot_traffic_by_node
+from proxypulse.services.reports import contextual_counter_delta, sum_snapshot_traffic_by_node
 
 settings = get_settings()
 
@@ -83,8 +83,14 @@ def _calculate_rate(latest_row, previous_row) -> NodeRateSummary:
     if elapsed_seconds <= 0:
         return NodeRateSummary(rx_bps=None, tx_bps=None, sample_seconds=None)
 
-    rx_delta = counter_delta(latest_row.rx_bytes, previous_row.rx_bytes)
-    tx_delta = counter_delta(latest_row.tx_bytes, previous_row.tx_bytes)
+    context = {
+        "current_interface": latest_row.network_interface,
+        "previous_interface": previous_row.network_interface,
+        "current_uptime": latest_row.uptime_seconds,
+        "previous_uptime": previous_row.uptime_seconds,
+    }
+    rx_delta = contextual_counter_delta(latest_row.rx_bytes, previous_row.rx_bytes, **context)
+    tx_delta = contextual_counter_delta(latest_row.tx_bytes, previous_row.tx_bytes, **context)
     return NodeRateSummary(
         rx_bps=rx_delta / elapsed_seconds,
         tx_bps=tx_delta / elapsed_seconds,
@@ -101,8 +107,10 @@ async def get_current_rate_map(session: AsyncSession, node_ids: list[str]) -> di
         result = await session.execute(
             select(
                 MetricSnapshot.created_at,
+                MetricSnapshot.network_interface,
                 MetricSnapshot.rx_bytes,
                 MetricSnapshot.tx_bytes,
+                MetricSnapshot.uptime_seconds,
             )
             .where(MetricSnapshot.node_id == node_id)
             .order_by(MetricSnapshot.created_at.desc())

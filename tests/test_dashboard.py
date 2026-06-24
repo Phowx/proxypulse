@@ -233,3 +233,74 @@ class DashboardTests(IsolatedAsyncioTestCase):
 
         self.assertEqual(summary.node_summaries[0].rx_bytes, 800)
         self.assertEqual(summary.node_summaries[0].tx_bytes, 500)
+
+    async def test_traffic_window_ignores_absolute_counters_when_interface_changes(self) -> None:
+        start_at = datetime(2026, 6, 23, 0, 0, tzinfo=timezone.utc)
+        end_at = start_at + timedelta(days=1)
+        gib = 1024**3
+        async with self.session_factory() as session:
+            node = Node(name="lagia", status=NodeStatus.online, is_online=True, agent_token="token")
+            session.add(node)
+            await session.flush()
+            session.add_all(
+                [
+                    MetricSnapshot(
+                        node_id=node.id,
+                        cpu_percent=10.0,
+                        memory_percent=20.0,
+                        disk_percent=30.0,
+                        load_avg_1m=0.1,
+                        network_interface="aggregate",
+                        rx_bytes=900 * gib,
+                        tx_bytes=800 * gib,
+                        uptime_seconds=100_000,
+                        created_at=start_at - timedelta(minutes=1),
+                    ),
+                    MetricSnapshot(
+                        node_id=node.id,
+                        cpu_percent=10.0,
+                        memory_percent=20.0,
+                        disk_percent=30.0,
+                        load_avg_1m=0.1,
+                        network_interface="eth0",
+                        rx_bytes=520 * gib,
+                        tx_bytes=474 * gib,
+                        uptime_seconds=100_060,
+                        created_at=start_at + timedelta(minutes=1),
+                    ),
+                ]
+            )
+            await session.commit()
+
+            switch_rate_map = await get_current_rate_map(session, [node.id])
+            session.add(
+                MetricSnapshot(
+                    node_id=node.id,
+                    cpu_percent=10.0,
+                    memory_percent=20.0,
+                    disk_percent=30.0,
+                    load_avg_1m=0.1,
+                    network_interface="eth0",
+                    rx_bytes=520 * gib + 800,
+                    tx_bytes=474 * gib + 500,
+                    uptime_seconds=100_120,
+                    created_at=start_at + timedelta(minutes=2),
+                )
+            )
+            await session.commit()
+
+            summary = await summarize_traffic_window(
+                session,
+                title="test",
+                start_at=start_at,
+                end_at=end_at,
+                end_inclusive=False,
+            )
+            rate_map = await get_current_rate_map(session, [node.id])
+
+        self.assertEqual(switch_rate_map[node.id].rx_bps, 0)
+        self.assertEqual(switch_rate_map[node.id].tx_bps, 0)
+        self.assertEqual(summary.node_summaries[0].rx_bytes, 800)
+        self.assertEqual(summary.node_summaries[0].tx_bytes, 500)
+        self.assertAlmostEqual(rate_map[node.id].rx_bps or 0.0, 800 / 60)
+        self.assertAlmostEqual(rate_map[node.id].tx_bps or 0.0, 500 / 60)

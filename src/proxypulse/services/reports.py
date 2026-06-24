@@ -75,6 +75,22 @@ def counter_delta(current_value: int, previous_value: int) -> int:
     return current_value
 
 
+def contextual_counter_delta(
+    current_value: int,
+    previous_value: int,
+    *,
+    current_interface: str | None,
+    previous_interface: str | None,
+    current_uptime: int,
+    previous_uptime: int,
+) -> int:
+    if (current_interface or "") != (previous_interface or ""):
+        return 0
+    if current_uptime < previous_uptime:
+        return current_value
+    return counter_delta(current_value, previous_value)
+
+
 def accumulate_counter_values(values: list[int]) -> int:
     total = 0
     previous_value: int | None = None
@@ -90,8 +106,28 @@ def accumulate_counter_values(values: list[int]) -> int:
 def accumulate_snapshot_traffic(snapshots: list[MetricSnapshot]) -> tuple[int, int]:
     if not snapshots:
         return 0, 0
-    rx_total = accumulate_counter_values([snapshot.rx_bytes for snapshot in snapshots])
-    tx_total = accumulate_counter_values([snapshot.tx_bytes for snapshot in snapshots])
+    rx_total = 0
+    tx_total = 0
+    previous_snapshot: MetricSnapshot | None = None
+    for snapshot in snapshots:
+        if previous_snapshot is not None:
+            context = {
+                "current_interface": snapshot.network_interface,
+                "previous_interface": previous_snapshot.network_interface,
+                "current_uptime": snapshot.uptime_seconds,
+                "previous_uptime": previous_snapshot.uptime_seconds,
+            }
+            rx_total += contextual_counter_delta(
+                snapshot.rx_bytes,
+                previous_snapshot.rx_bytes,
+                **context,
+            )
+            tx_total += contextual_counter_delta(
+                snapshot.tx_bytes,
+                previous_snapshot.tx_bytes,
+                **context,
+            )
+        previous_snapshot = snapshot
     return rx_total, tx_total
 
 
@@ -128,14 +164,22 @@ async def sum_snapshot_traffic_by_node(
     ordered_query = select(
         MetricSnapshot.node_id.label("node_id"),
         MetricSnapshot.created_at.label("created_at"),
+        MetricSnapshot.network_interface.label("network_interface"),
         MetricSnapshot.rx_bytes.label("rx_bytes"),
         MetricSnapshot.tx_bytes.label("tx_bytes"),
+        MetricSnapshot.uptime_seconds.label("uptime_seconds"),
+        func.lag(MetricSnapshot.network_interface)
+        .over(partition_by=MetricSnapshot.node_id, order_by=order_columns)
+        .label("previous_network_interface"),
         func.lag(MetricSnapshot.rx_bytes)
         .over(partition_by=MetricSnapshot.node_id, order_by=order_columns)
         .label("previous_rx_bytes"),
         func.lag(MetricSnapshot.tx_bytes)
         .over(partition_by=MetricSnapshot.node_id, order_by=order_columns)
         .label("previous_tx_bytes"),
+        func.lag(MetricSnapshot.uptime_seconds)
+        .over(partition_by=MetricSnapshot.node_id, order_by=order_columns)
+        .label("previous_uptime_seconds"),
     ).where(
         or_(
             MetricSnapshot.id.in_(baseline_ids),
@@ -149,13 +193,22 @@ async def sum_snapshot_traffic_by_node(
         ordered_query = ordered_query.where(MetricSnapshot.node_id.in_(node_ids))
 
     ordered = ordered_query.subquery()
+    interface_changed = func.coalesce(ordered.c.network_interface, "") != func.coalesce(
+        ordered.c.previous_network_interface,
+        "",
+    )
+    host_restarted = ordered.c.uptime_seconds < ordered.c.previous_uptime_seconds
     rx_delta = case(
         (ordered.c.previous_rx_bytes.is_(None), 0),
+        (interface_changed, 0),
+        (host_restarted, ordered.c.rx_bytes),
         (ordered.c.rx_bytes >= ordered.c.previous_rx_bytes, ordered.c.rx_bytes - ordered.c.previous_rx_bytes),
         else_=ordered.c.rx_bytes,
     )
     tx_delta = case(
         (ordered.c.previous_tx_bytes.is_(None), 0),
+        (interface_changed, 0),
+        (host_restarted, ordered.c.tx_bytes),
         (ordered.c.tx_bytes >= ordered.c.previous_tx_bytes, ordered.c.tx_bytes - ordered.c.previous_tx_bytes),
         else_=ordered.c.tx_bytes,
     )
