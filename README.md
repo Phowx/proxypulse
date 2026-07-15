@@ -36,6 +36,8 @@ bash deploy/manage.sh
 
 首次使用先安装 Server，按提示填写 Bot Token、管理员 Telegram ID、API 本地端口、公网 Server URL 和 Caddy 公网端口。API 默认只监听 `127.0.0.1:8080`，Caddy 自动反代公网入口。然后向 Bot 发送 `/enroll my-node` 获取 Agent 接入令牌，再在节点机器安装 Agent。
 
+向 Bot 发送 `/start` 后，输入框下方会显示“节点、DNS、流量、日报、设置”五个快捷入口；键盘可收起且不会在点击后消失。“/”菜单仅保留 `/start`、`/help`、`/cancel` 和 `/enroll`，原有高级命令仍可直接输入并可在 `/help` 中查看。
+
 公网 URL 只填写协议和域名/IP，不带路径；脚本会按选择的公网端口生成最终 URL。例如域名 `https://monitor.example.com` 配合端口 `8443`，最终入口为 `https://monitor.example.com:8443`。请在云安全组或防火墙中放行该端口；使用公网 HTTPS 域名时，还需确保域名解析正确，并允许 Caddy 完成证书签发所需的验证连接。
 
 ## 采集范围

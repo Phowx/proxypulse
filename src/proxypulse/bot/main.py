@@ -19,8 +19,10 @@ from aiogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    KeyboardButton,
     MenuButtonCommands,
     Message,
+    ReplyKeyboardMarkup,
 )
 
 from proxypulse.core.config import get_settings
@@ -82,15 +84,25 @@ settings = get_settings()
 router = Router()
 logger = logging.getLogger(__name__)
 
-MENU_NODES = "节点概览"
-MENU_TRAFFIC = "24h 流量"
-MENU_DAILY = "流量日报"
-MENU_DNS = "DNS 管理"
+NAV_NODES = "节点"
+NAV_DNS = "DNS"
+NAV_TRAFFIC = "流量"
+NAV_DAILY = "日报"
+NAV_SETTINGS = "设置"
 CALLBACK_SHOW_NODES = "show:nodes"
 CALLBACK_SHOW_TRAFFIC = "show:traffic"
 CALLBACK_SHOW_DAILY = "show:daily"
+CALLBACK_SHOW_SETTINGS = "show:settings"
 CALLBACK_SHOW_MENU = "show:menu"
+CALLBACK_START_ENROLL = "enroll:start"
+CALLBACK_INPUT_CANCEL = "input:cancel"
+CALLBACK_DAILY_SCHEDULE = "settings:daily"
+CALLBACK_DAILY_TIME_EDIT = "settings:daily:edit"
+CALLBACK_QUOTA_HELP = "settings:quota"
+CALLBACK_COMMAND_HELP = "settings:help"
 CALLBACK_NODE_PREFIX = "node:"
+CALLBACK_NODE_DIAG_PREFIX = "node_diag:"
+CALLBACK_NODE_QUOTA_PREFIX = "node_quota:"
 CALLBACK_NODE_DELETE_PREFIX = "node_delete:"
 CALLBACK_NODE_DELETE_CONFIRM_PREFIX = "node_delete_confirm:"
 CALLBACK_NODE_DELETE_CANCEL_PREFIX = "node_delete_cancel:"
@@ -122,22 +134,9 @@ DNS_TTL_OPTIONS = [
 DNS_PAGE_SIZE = 10
 BOT_COMMANDS = [
     BotCommand(command="start", description="打开控制台首页"),
-    BotCommand(command="menu", description="打开控制台菜单"),
+    BotCommand(command="help", description="查看功能与命令说明"),
+    BotCommand(command="cancel", description="取消当前操作"),
     BotCommand(command="enroll", description="生成节点接入令牌"),
-    BotCommand(command="nodes", description="查看节点列表"),
-    BotCommand(command="node", description="查看节点详情"),
-    BotCommand(command="delete_node", description="删除节点并清理数据"),
-    BotCommand(command="traffic", description="查看近24小时流量"),
-    BotCommand(command="traffic_diag", description="诊断节点流量统计口径"),
-    BotCommand(command="daily", description="查看前一日流量日报"),
-    BotCommand(command="daily_time", description="查看或设置日报推送时间"),
-    BotCommand(command="quota", description="查看节点流量套餐"),
-    BotCommand(command="dns", description="打开 Cloudflare DNS 管理"),
-    BotCommand(command="dns_zones", description="列出可管理 DNS Zone"),
-    BotCommand(command="quota_monthly", description="设置按月流量套餐"),
-    BotCommand(command="quota_interval", description="设置按天循环套餐"),
-    BotCommand(command="quota_calibrate", description="校准节点已用流量"),
-    BotCommand(command="quota_clear", description="清除节点流量套餐"),
 ]
 BOT_COMMAND_LANGUAGE_CODES = ("zh", "en")
 
@@ -165,15 +164,16 @@ class DnsPendingAction:
 
 
 @dataclass(slots=True)
-class DnsSession:
+class BotSession:
     zone_key: str | None = None
     page: int = 1
     selected_record_id: str | None = None
     draft: DnsDraft | None = None
     pending_action: DnsPendingAction | None = None
+    pending_input: Literal["enroll_name", "daily_time"] | None = None
 
 
-DNS_SESSIONS: dict[int, DnsSession] = {}
+BOT_SESSIONS: dict[int, BotSession] = {}
 
 
 def is_admin(message: Message) -> bool:
@@ -182,18 +182,64 @@ def is_admin(message: Message) -> bool:
 
 async def reject_if_not_admin(message: Message) -> bool:
     if is_admin(message):
+        command_name = (message.text or "").split(maxsplit=1)[0].split("@", 1)[0]
+        if (
+            message.from_user is not None
+            and command_name.startswith("/")
+            and command_name != "/cancel"
+            and cancel_active_flow(message.from_user.id)
+        ):
+            await message.answer("ℹ️ 已取消未完成的操作。")
         return False
     await message.answer("无权访问。")
     return True
 
 
-def get_dns_session(user_id: int) -> DnsSession:
-    return DNS_SESSIONS.setdefault(user_id, DnsSession())
+def get_bot_session(user_id: int) -> BotSession:
+    return BOT_SESSIONS.setdefault(user_id, BotSession())
 
 
-def reset_dns_session(user_id: int) -> DnsSession:
-    DNS_SESSIONS[user_id] = DnsSession()
-    return DNS_SESSIONS[user_id]
+def get_dns_session(user_id: int) -> BotSession:
+    session = get_bot_session(user_id)
+    session.pending_input = None
+    return session
+
+
+def reset_dns_session(user_id: int) -> BotSession:
+    session = get_bot_session(user_id)
+    session.zone_key = None
+    session.page = 1
+    session.selected_record_id = None
+    session.draft = None
+    session.pending_action = None
+    session.pending_input = None
+    return session
+
+
+def cancel_active_flow(user_id: int) -> bool:
+    session = BOT_SESSIONS.get(user_id)
+    if session is None:
+        return False
+    had_active_flow = bool(session.pending_input or session.draft or session.pending_action)
+    session.pending_input = None
+    session.draft = None
+    session.pending_action = None
+    return had_active_flow
+
+
+def begin_text_input(
+    user_id: int,
+    pending_input: Literal["enroll_name", "daily_time"],
+) -> bool:
+    cancelled = cancel_active_flow(user_id)
+    get_bot_session(user_id).pending_input = pending_input
+    return cancelled
+
+
+def prepend_cancelled_notice(text: str, cancelled: bool) -> str:
+    if not cancelled:
+        return text
+    return "ℹ️ 已取消未完成的操作。\n\n" + text
 
 
 def get_dns_service() -> CloudflareDNSService:
@@ -233,17 +279,17 @@ def build_dns_home_keyboard(service: CloudflareDNSService) -> InlineKeyboardMark
         [InlineKeyboardButton(text=zone.zone_name, callback_data=f"{CALLBACK_DNS_ZONE_PREFIX}{zone.key}")]
         for zone in service.list_configured_zones()
     ]
-    rows.append([InlineKeyboardButton(text="返回菜单", callback_data=CALLBACK_SHOW_MENU)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def build_dns_zone_keyboard(zone_key: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="查看记录", callback_data=f"{CALLBACK_DNS_LIST_PREFIX}{zone_key}:1")],
-            [InlineKeyboardButton(text="新增记录", callback_data=f"{CALLBACK_DNS_CREATE_PREFIX}{zone_key}")],
+            [
+                InlineKeyboardButton(text="查看记录", callback_data=f"{CALLBACK_DNS_LIST_PREFIX}{zone_key}:1"),
+                InlineKeyboardButton(text="添加记录", callback_data=f"{CALLBACK_DNS_CREATE_PREFIX}{zone_key}"),
+            ],
             [InlineKeyboardButton(text="切换 Zone", callback_data=CALLBACK_DNS_HOME)],
-            [InlineKeyboardButton(text="返回菜单", callback_data=CALLBACK_SHOW_MENU)],
         ]
     )
 
@@ -280,8 +326,12 @@ def build_dns_record_list_keyboard(record_page: CloudflareDNSRecordPage) -> Inli
         )
     if pager_row:
         rows.append(pager_row)
-    rows.append([InlineKeyboardButton(text="刷新列表", callback_data=f"{CALLBACK_DNS_LIST_PREFIX}{record_page.zone.key}:{record_page.page}")])
-    rows.append([InlineKeyboardButton(text="新增记录", callback_data=f"{CALLBACK_DNS_CREATE_PREFIX}{record_page.zone.key}")])
+    rows.append(
+        [
+            InlineKeyboardButton(text="刷新", callback_data=f"{CALLBACK_DNS_LIST_PREFIX}{record_page.zone.key}:{record_page.page}"),
+            InlineKeyboardButton(text="添加记录", callback_data=f"{CALLBACK_DNS_CREATE_PREFIX}{record_page.zone.key}"),
+        ]
+    )
     rows.append([InlineKeyboardButton(text="返回 Zone", callback_data=f"{CALLBACK_DNS_ZONE_PREFIX}{record_page.zone.key}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -289,16 +339,24 @@ def build_dns_record_list_keyboard(record_page: CloudflareDNSRecordPage) -> Inli
 def build_dns_record_detail_keyboard(zone_key: str, record_id: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="更新记录", callback_data=f"{CALLBACK_DNS_UPDATE_PREFIX}{zone_key}:{record_id}")],
-            [InlineKeyboardButton(text="删除记录", callback_data=f"{CALLBACK_DNS_DELETE_PREFIX}{zone_key}:{record_id}")],
-            [InlineKeyboardButton(text="返回列表", callback_data=f"{CALLBACK_DNS_LIST_PREFIX}{zone_key}:1")],
-            [InlineKeyboardButton(text="切换 Zone", callback_data=f"{CALLBACK_DNS_ZONE_PREFIX}{zone_key}")],
+            [
+                InlineKeyboardButton(text="修改", callback_data=f"{CALLBACK_DNS_UPDATE_PREFIX}{zone_key}:{record_id}"),
+                InlineKeyboardButton(text="删除", callback_data=f"{CALLBACK_DNS_DELETE_PREFIX}{zone_key}:{record_id}"),
+            ],
+            [
+                InlineKeyboardButton(text="返回列表", callback_data=f"{CALLBACK_DNS_LIST_PREFIX}{zone_key}:1"),
+                InlineKeyboardButton(text="切换 Zone", callback_data=f"{CALLBACK_DNS_ZONE_PREFIX}{zone_key}"),
+            ],
         ]
     )
 
 
 def build_dns_type_keyboard(zone_key: str) -> InlineKeyboardMarkup:
-    rows = [[InlineKeyboardButton(text=record_type, callback_data=f"{CALLBACK_DNS_TYPE_PREFIX}{zone_key}:{record_type}")] for record_type in SUPPORTED_DNS_RECORD_TYPES]
+    buttons = [
+        InlineKeyboardButton(text=record_type, callback_data=f"{CALLBACK_DNS_TYPE_PREFIX}{zone_key}:{record_type}")
+        for record_type in SUPPORTED_DNS_RECORD_TYPES
+    ]
+    rows = _chunk_buttons(buttons, size=3)
     rows.append([InlineKeyboardButton(text="取消", callback_data=CALLBACK_DNS_CANCEL)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -316,15 +374,14 @@ def build_dns_prompt_keyboard(*, can_keep: bool) -> InlineKeyboardMarkup:
 
 
 def build_dns_ttl_keyboard(*, current_ttl: int | None, allow_keep: bool) -> InlineKeyboardMarkup:
-    rows = [
-        [
-            InlineKeyboardButton(
-                text=f"{label}{' ✓' if current_ttl == ttl else ''}",
-                callback_data=f"{CALLBACK_DNS_TTL_PREFIX}{ttl}",
-            )
-        ]
+    buttons = [
+        InlineKeyboardButton(
+            text=f"{label}{' ✓' if current_ttl == ttl else ''}",
+            callback_data=f"{CALLBACK_DNS_TTL_PREFIX}{ttl}",
+        )
         for ttl, label in DNS_TTL_OPTIONS
     ]
+    rows = _chunk_buttons(buttons, size=3)
     if allow_keep:
         rows.append([InlineKeyboardButton(text="保留原值", callback_data=f"{CALLBACK_DNS_KEEP_PREFIX}ttl")])
     rows.append([InlineKeyboardButton(text="取消", callback_data=CALLBACK_DNS_CANCEL)])
@@ -337,13 +394,11 @@ def build_dns_proxied_keyboard(*, current_value: bool | None, allow_keep: bool) 
             InlineKeyboardButton(
                 text=f"已代理{' ✓' if current_value is True else ''}",
                 callback_data=f"{CALLBACK_DNS_PROXIED_PREFIX}1",
-            )
-        ],
-        [
+            ),
             InlineKeyboardButton(
                 text=f"仅 DNS{' ✓' if current_value is False else ''}",
                 callback_data=f"{CALLBACK_DNS_PROXIED_PREFIX}0",
-            )
+            ),
         ],
     ]
     if allow_keep:
@@ -360,8 +415,10 @@ def build_dns_confirm_keyboard(action: Literal["create", "update", "delete"]) ->
     }[action]
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text=action_label, callback_data=f"{CALLBACK_DNS_CONFIRM_PREFIX}{action}")],
-            [InlineKeyboardButton(text="取消", callback_data=CALLBACK_DNS_CANCEL)],
+            [
+                InlineKeyboardButton(text=action_label, callback_data=f"{CALLBACK_DNS_CONFIRM_PREFIX}{action}"),
+                InlineKeyboardButton(text="取消", callback_data=CALLBACK_DNS_CANCEL),
+            ],
         ]
     )
 
@@ -454,50 +511,120 @@ def render_dns_delete_preview(record: CloudflareDNSRecord, zone_name: str) -> st
 
 
 def dashboard_button_rows() -> list[list[str]]:
-    return [
-        [MENU_NODES, MENU_DNS],
-    ]
+    return [[NAV_NODES, NAV_DNS, NAV_TRAFFIC, NAV_DAILY, NAV_SETTINGS]]
 
 
-def build_dashboard_keyboard() -> InlineKeyboardMarkup:
-    rows = []
-    for row in dashboard_button_rows():
-        rows.append([InlineKeyboardButton(text=label, callback_data=_dashboard_button_callback(label)) for label in row])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def _dashboard_button_callback(label: str) -> str:
-    if label == MENU_NODES:
-        return CALLBACK_SHOW_NODES
-    if label == MENU_DNS:
-        return CALLBACK_DNS_HOME
-    raise ValueError(f"Unsupported dashboard label: {label}")
+def build_dashboard_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=label) for label in row]
+            for row in dashboard_button_rows()
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=False,
+        is_persistent=False,
+        input_field_placeholder="选择功能或输入命令",
+    )
 
 
 def build_dashboard_menu_text() -> str:
     return "<b>⚡ ProxyPulse 控制台</b>\n" + html_card("服务状态", ["控制台已就绪，请选择功能。"])
 
 
-def _chunk_buttons(buttons: list[InlineKeyboardButton], size: int = 3) -> list[list[InlineKeyboardButton]]:
+def build_settings_menu_text() -> str:
+    return (
+        "<b>⚙️ 设置</b>\n"
+        + html_card(
+            "管理入口",
+            [
+                "日报时间支持按钮引导修改。",
+                "流量套餐参数较多，继续使用高级命令管理。",
+                "命令帮助中保留所有兼容命令的用法。",
+            ],
+        )
+    )
+
+
+def build_command_help_text() -> str:
+    return (
+        "<b>📖 ProxyPulse 命令帮助</b>\n"
+        + html_card(
+            "常用命令",
+            [
+                f"{html_code('/start')} 打开首页并恢复底部导航",
+                f"{html_code('/enroll')} 接入节点",
+                f"{html_code('/cancel')} 取消当前输入或草稿",
+                f"{html_code('/help')} 查看本说明",
+            ],
+        )
+        + "\n\n"
+        + html_card(
+            "高级兼容命令",
+            [
+                html_code("/nodes · /node <节点名> · /delete_node <节点名>"),
+                html_code("/traffic · /traffic_diag <节点名>"),
+                html_code("/daily · /daily_time [HH:MM]"),
+                html_code("/quota <节点名> · /quota_monthly ..."),
+                html_code("/quota_interval ... · /quota_calibrate ... · /quota_clear <节点名>"),
+                html_code("/dns · /dns_zones"),
+                "这些命令不会显示在“/”菜单中，但仍可直接输入。",
+            ],
+        )
+    )
+
+
+def build_enrollment_prompt_text() -> str:
+    return (
+        "<b>🔐 节点接入</b>\n"
+        + html_card(
+            "下一步",
+            [
+                "请发送节点名称，例如：tokyo。",
+                f"发送 {html_code('/cancel')} 可取消。",
+            ],
+        )
+    )
+
+
+def build_daily_time_prompt_text() -> str:
+    return (
+        "<b>🕘 修改日报推送时间</b>\n"
+        + html_card(
+            "下一步",
+            [
+                "请发送 HH:MM 格式的时间，例如：08:30。",
+                f"时区使用服务端配置：{html_code(settings.report_timezone)}。",
+            ],
+        )
+    )
+
+
+def _chunk_buttons(buttons: list[InlineKeyboardButton], size: int = 2) -> list[list[InlineKeyboardButton]]:
     return [buttons[index : index + size] for index in range(0, len(buttons), size)]
 
 
 def build_node_list_keyboard(node_names: list[str]) -> InlineKeyboardMarkup | None:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="刷新概览", callback_data=CALLBACK_SHOW_NODES)],
-            [InlineKeyboardButton(text="返回菜单", callback_data=CALLBACK_SHOW_MENU)],
+    buttons = [InlineKeyboardButton(text=name, callback_data=f"{CALLBACK_NODE_PREFIX}{name}") for name in node_names]
+    rows = _chunk_buttons(buttons)
+    rows.append(
+        [
+            InlineKeyboardButton(text="接入节点", callback_data=CALLBACK_START_ENROLL),
+            InlineKeyboardButton(text="刷新", callback_data=CALLBACK_SHOW_NODES),
         ]
     )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def build_node_detail_keyboard(node_name: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="刷新详情", callback_data=f"{CALLBACK_NODE_PREFIX}{node_name}"),
-                InlineKeyboardButton(text="返回节点列表", callback_data=CALLBACK_SHOW_NODES),
-                InlineKeyboardButton(text="返回菜单", callback_data=CALLBACK_SHOW_MENU),
+                InlineKeyboardButton(text="刷新", callback_data=f"{CALLBACK_NODE_PREFIX}{node_name}"),
+                InlineKeyboardButton(text="流量诊断", callback_data=f"{CALLBACK_NODE_DIAG_PREFIX}{node_name}"),
+            ],
+            [
+                InlineKeyboardButton(text="套餐信息", callback_data=f"{CALLBACK_NODE_QUOTA_PREFIX}{node_name}"),
+                InlineKeyboardButton(text="返回列表", callback_data=CALLBACK_SHOW_NODES),
             ],
             [
                 InlineKeyboardButton(text="🗑️ 删除节点", callback_data=f"{CALLBACK_NODE_DELETE_PREFIX}{node_name}"),
@@ -513,17 +640,73 @@ def build_node_delete_confirm_keyboard(node_name: str) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="确认删除", callback_data=f"{CALLBACK_NODE_DELETE_CONFIRM_PREFIX}{node_name}"),
                 InlineKeyboardButton(text="取消", callback_data=f"{CALLBACK_NODE_DELETE_CANCEL_PREFIX}{node_name}"),
             ],
-            [InlineKeyboardButton(text="返回节点列表", callback_data=CALLBACK_SHOW_NODES)],
+            [InlineKeyboardButton(text="返回列表", callback_data=CALLBACK_SHOW_NODES)],
         ]
     )
 
 
 def build_single_action_keyboard(refresh_callback: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="刷新", callback_data=refresh_callback)]]
+    )
+
+
+def build_daily_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="刷新", callback_data=refresh_callback)],
-            [InlineKeyboardButton(text="返回菜单", callback_data=CALLBACK_SHOW_MENU)],
+            [
+                InlineKeyboardButton(text="刷新", callback_data=CALLBACK_SHOW_DAILY),
+                InlineKeyboardButton(text="推送时间设置", callback_data=CALLBACK_DAILY_SCHEDULE),
+            ]
         ]
+    )
+
+
+def build_settings_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="日报时间", callback_data=CALLBACK_DAILY_SCHEDULE),
+                InlineKeyboardButton(text="套餐管理说明", callback_data=CALLBACK_QUOTA_HELP),
+            ],
+            [InlineKeyboardButton(text="命令帮助", callback_data=CALLBACK_COMMAND_HELP)],
+        ]
+    )
+
+
+def build_daily_schedule_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="修改时间", callback_data=CALLBACK_DAILY_TIME_EDIT)],
+            [InlineKeyboardButton(text="返回设置", callback_data=CALLBACK_SHOW_SETTINGS)],
+        ]
+    )
+
+
+def build_input_cancel_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="取消", callback_data=CALLBACK_INPUT_CANCEL)]]
+    )
+
+
+def build_enrollment_done_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="返回节点概览", callback_data=CALLBACK_SHOW_NODES)]]
+    )
+
+
+def build_node_quota_keyboard(node_name: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="返回节点详情", callback_data=f"{CALLBACK_NODE_PREFIX}{node_name}")],
+            [InlineKeyboardButton(text="返回节点概览", callback_data=CALLBACK_SHOW_NODES)],
+        ]
+    )
+
+
+def build_command_help_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="返回设置", callback_data=CALLBACK_SHOW_SETTINGS)]]
     )
 
 
@@ -788,7 +971,7 @@ async def render_nodes_response() -> tuple[str, InlineKeyboardMarkup | None]:
         overview, cards = await build_nodes_dashboard(session, nodes)
 
     if not nodes:
-        return "<b>📡 节点概览</b>\n当前还没有接入任何节点。", build_single_action_keyboard(CALLBACK_SHOW_NODES)
+        return "<b>📡 节点概览</b>\n当前还没有接入任何节点。", build_node_list_keyboard([])
 
     status_parts = [f"🟢 在线 {overview.online_count}", f"🔴 离线 {overview.offline_count}"]
     if overview.pending_count:
@@ -796,7 +979,7 @@ async def render_nodes_response() -> tuple[str, InlineKeyboardMarkup | None]:
     lines = ["<b>📡 节点概览</b>", " · ".join(status_parts)]
     for card in cards:
         lines.extend(["", render_node_card(card)])
-    return "\n".join(lines), build_node_list_keyboard([])
+    return "\n".join(lines), build_node_list_keyboard([node.name for node in nodes])
 
 
 async def render_node_detail(node_name: str) -> tuple[str, InlineKeyboardMarkup]:
@@ -886,7 +1069,7 @@ async def render_traffic_response() -> tuple[str, InlineKeyboardMarkup]:
 async def render_daily_response() -> tuple[str, InlineKeyboardMarkup | None]:
     async with SessionLocal() as session:
         _, summary = await summarize_previous_local_day(session)
-    return format_traffic_summary(summary), None
+    return format_traffic_summary(summary), build_daily_keyboard()
 
 
 async def render_quota_response(node_name: str) -> str:
@@ -896,6 +1079,17 @@ async def render_quota_response(node_name: str) -> str:
             raise QuotaServiceError("未找到对应节点。")
         status = await get_quota_status(session, node)
     return f"<b>🧾 套餐状态 · {html.escape(node_name)}</b>\n{html_card('流量套餐', render_quota_detail_html(status))}"
+
+
+async def render_node_quota_management_response(node_name: str) -> str:
+    status_text = await render_quota_response(node_name)
+    command_lines = [
+        f"月度 {html_code(f'/quota_monthly {node_name} <上限GiB> <重置日> <HH:MM>')}",
+        f"循环 {html_code(f'/quota_interval {node_name} <上限GiB> <间隔天数> <起始时间>')}",
+        f"校准 {html_code(f'/quota_calibrate {node_name} <已用GiB>')}",
+        f"清除 {html_code(f'/quota_clear {node_name}')}",
+    ]
+    return status_text + "\n\n" + html_card("管理命令", command_lines)
 
 
 async def render_daily_schedule_response() -> str:
@@ -909,8 +1103,7 @@ async def render_daily_schedule_response() -> str:
                 f"时区 {html_code(schedule.timezone)}",
                 f"时间 每天 {html_code(schedule.clock_text)}",
                 "",
-                f"修改 {html_code('/daily_time HH:MM')}",
-                f"示例 {html_code('/daily_time 08:30')}",
+                "点击下方按钮修改，或直接使用 /daily_time HH:MM。",
             ],
         )
     )
@@ -927,7 +1120,7 @@ async def render_dns_home() -> tuple[str, InlineKeyboardMarkup | None]:
         service = get_dns_service()
         return render_dns_home_text(service), build_dns_home_keyboard(service)
     except (CloudflareServiceError, ValueError) as exc:
-        return html_error("☁️ DNS 管理", exc), build_single_action_keyboard(CALLBACK_SHOW_MENU)
+        return html_error("☁️ DNS 管理", exc), build_single_action_keyboard(CALLBACK_DNS_HOME)
 
 
 async def render_dns_zone(zone_key: str) -> tuple[str, InlineKeyboardMarkup]:
@@ -1016,11 +1209,41 @@ async def present_dns_preview(target: Message | CallbackQuery, draft: DnsDraft) 
         await target.answer(text, parse_mode="HTML", reply_markup=keyboard)
 
 
-def require_dns_session(user_id: int) -> DnsSession:
-    session = DNS_SESSIONS.get(user_id)
+def require_dns_session(user_id: int) -> BotSession:
+    session = BOT_SESSIONS.get(user_id)
     if session is None:
         raise CloudflareServiceError("DNS 流程已过期，请重新进入 /dns。")
     return session
+
+
+async def build_enrollment_response(node_name: str) -> str:
+    async with SessionLocal() as session:
+        node = await create_or_refresh_enrollment(session, node_name)
+    agent_command = (
+        f"PROXYPULSE_SERVER_URL={settings.server_url} "
+        f"PROXYPULSE_AGENT_NAME={node.name} "
+        f"PROXYPULSE_AGENT_ENROLLMENT_TOKEN={node.enrollment_token} "
+        "python -m proxypulse.agent"
+    )
+    return (
+        f"<b>🔐 节点接入 · {html.escape(node.name)}</b>\n"
+        + html_card("接入令牌", [html_code(node.enrollment_token)])
+        + "\n\n"
+        + html_card("Agent 启动命令", [html_code(agent_command)])
+    )
+
+
+async def update_daily_schedule_response(clock_text: str) -> str:
+    hour, minute = parse_daily_report_clock(clock_text)
+    async with SessionLocal() as session:
+        schedule = await set_daily_report_schedule(session, hour=hour, minute=minute)
+    return (
+        "<b>✅ 已更新流量日报推送时间</b>\n"
+        + html_card(
+            "当前设置",
+            [f"时区 {html_code(schedule.timezone)}", f"时间 每天 {html_code(schedule.clock_text)}"],
+        )
+    )
 
 
 @router.message(Command("start"))
@@ -1028,6 +1251,29 @@ async def start_handler(message: Message) -> None:
     if await reject_if_not_admin(message):
         return
     await send_dashboard(message)
+
+
+@router.message(Command("help"))
+async def help_handler(message: Message) -> None:
+    if await reject_if_not_admin(message):
+        return
+    await message.answer(
+        build_command_help_text(),
+        parse_mode="HTML",
+        reply_markup=build_dashboard_keyboard(),
+    )
+
+
+@router.message(Command("cancel"))
+async def cancel_handler(message: Message) -> None:
+    if await reject_if_not_admin(message):
+        return
+    if message.from_user is None:
+        await message.answer("无法识别当前用户。")
+        return
+    cancelled = cancel_active_flow(message.from_user.id)
+    text = "✅ 已取消当前操作。" if cancelled else "当前没有待取消的操作。"
+    await message.answer(text, reply_markup=build_dashboard_keyboard())
 
 
 @router.message(Command("menu"))
@@ -1041,28 +1287,26 @@ async def enroll_handler(message: Message, command: CommandObject) -> None:
         return
     node_name = (command.args or "").strip()
     if not node_name:
-        await message.answer("用法：/enroll <节点名>")
+        if message.from_user is None:
+            await message.answer("无法识别当前用户。")
+            return
+        begin_text_input(message.from_user.id, "enroll_name")
+        await message.answer(
+            build_enrollment_prompt_text(),
+            parse_mode="HTML",
+            reply_markup=build_input_cancel_keyboard(),
+        )
         return
 
-    async with SessionLocal() as session:
-        try:
-            node = await create_or_refresh_enrollment(session, node_name)
-        except NodeServiceError as exc:
-            await message.answer(str(exc))
-            return
-
-    agent_command = (
-        f"PROXYPULSE_SERVER_URL={settings.server_url} "
-        f"PROXYPULSE_AGENT_NAME={node.name} "
-        f"PROXYPULSE_AGENT_ENROLLMENT_TOKEN={node.enrollment_token} "
-        "python -m proxypulse.agent"
-    )
+    try:
+        text = await build_enrollment_response(node_name)
+    except NodeServiceError as exc:
+        await message.answer(str(exc))
+        return
     await message.answer(
-        f"<b>🔐 节点接入 · {html.escape(node.name)}</b>\n"
-        + html_card("接入令牌", [html_code(node.enrollment_token)])
-        + "\n\n"
-        + html_card("Agent 启动命令", [html_code(agent_command)]),
+        text,
         parse_mode="HTML",
+        reply_markup=build_enrollment_done_keyboard(),
     )
 
 
@@ -1137,24 +1381,23 @@ async def daily_time_handler(message: Message, command: CommandObject) -> None:
         return
     clock_text = (command.args or "").strip()
     if not clock_text:
-        await message.answer(await render_daily_schedule_response(), parse_mode="HTML")
+        await message.answer(
+            await render_daily_schedule_response(),
+            parse_mode="HTML",
+            reply_markup=build_daily_schedule_keyboard(),
+        )
         return
 
     try:
-        hour, minute = parse_daily_report_clock(clock_text)
-        async with SessionLocal() as session:
-            schedule = await set_daily_report_schedule(session, hour=hour, minute=minute)
+        text = await update_daily_schedule_response(clock_text)
     except ReportScheduleError as exc:
         await message.answer(str(exc))
         return
 
     await message.answer(
-        "<b>✅ 已更新流量日报推送时间</b>\n"
-        + html_card(
-            "当前设置",
-            [f"时区 {html_code(schedule.timezone)}", f"时间 每天 {html_code(schedule.clock_text)}"],
-        ),
+        text,
         parse_mode="HTML",
+        reply_markup=build_daily_schedule_keyboard(),
     )
 
 
@@ -1316,18 +1559,77 @@ async def dns_zones_handler(message: Message) -> None:
     await message.answer(f"<b>☁️ DNS Zones</b>\n{html_card('已配置', lines)}", parse_mode="HTML")
 
 
+@router.message(F.text.in_({NAV_NODES, NAV_DNS, NAV_TRAFFIC, NAV_DAILY, NAV_SETTINGS}))
+async def navigation_handler(message: Message) -> None:
+    if await reject_if_not_admin(message):
+        return
+    if message.from_user is None:
+        await message.answer("无法识别当前用户。")
+        return
+
+    cancelled = cancel_active_flow(message.from_user.id)
+    if message.text == NAV_NODES:
+        text, keyboard = await render_nodes_response()
+    elif message.text == NAV_DNS:
+        reset_dns_session(message.from_user.id)
+        text, keyboard = await render_dns_home()
+    elif message.text == NAV_TRAFFIC:
+        text, keyboard = await render_traffic_response()
+    elif message.text == NAV_DAILY:
+        text, keyboard = await render_daily_response()
+    else:
+        text, keyboard = build_settings_menu_text(), build_settings_keyboard()
+
+    await message.answer(
+        prepend_cancelled_notice(text, cancelled),
+        parse_mode="HTML",
+        reply_markup=keyboard,
+    )
+
+
 @router.message(F.text)
-async def dns_text_input_handler(message: Message) -> None:
+async def text_input_handler(message: Message) -> None:
     if not is_admin(message) or message.from_user is None:
         return
-    session = DNS_SESSIONS.get(message.from_user.id)
-    if session is None or session.draft is None or session.draft.pending_field is None:
-        return
-    draft = session.draft
+    session = BOT_SESSIONS.get(message.from_user.id)
     value = (message.text or "").strip()
     if not value:
         await message.answer("输入不能为空，请重新发送。")
         return
+
+    if session is not None and session.pending_input == "enroll_name":
+        try:
+            text = await build_enrollment_response(value)
+        except NodeServiceError as exc:
+            await message.answer(f"{exc}\n请重新发送节点名称，或使用 /cancel 取消。")
+            return
+        session.pending_input = None
+        await message.answer(
+            text,
+            parse_mode="HTML",
+            reply_markup=build_enrollment_done_keyboard(),
+        )
+        return
+
+    if session is not None and session.pending_input == "daily_time":
+        try:
+            text = await update_daily_schedule_response(value)
+        except ReportScheduleError as exc:
+            await message.answer(f"{exc}\n请重新发送 HH:MM，或使用 /cancel 取消。")
+            return
+        session.pending_input = None
+        await message.answer(
+            text,
+            parse_mode="HTML",
+            reply_markup=build_daily_schedule_keyboard(),
+        )
+        return
+
+    if session is None or session.draft is None or session.draft.pending_field is None:
+        await message.answer("无法识别该输入，请使用底部导航或 /help。")
+        return
+
+    draft = session.draft
     if draft.pending_field == "name":
         draft.name = value
         draft.pending_field = None
@@ -1338,12 +1640,19 @@ async def dns_text_input_handler(message: Message) -> None:
         draft.pending_field = None
         await prompt_dns_ttl(message, draft)
 
+
 @router.callback_query(F.data == CALLBACK_SHOW_MENU)
 async def menu_callback_handler(callback: CallbackQuery) -> None:
     if not callback.from_user or callback.from_user.id not in settings.admin_telegram_ids:
         await callback.answer("无权访问。", show_alert=True)
         return
-    await safe_edit_callback_message(callback, build_dashboard_menu_text(), build_dashboard_keyboard())
+    cancel_active_flow(callback.from_user.id)
+    await safe_edit_callback_message(callback, build_dashboard_menu_text(), None)
+    if callback.message is not None:
+        await callback.message.answer(
+            "底部导航已恢复。",
+            reply_markup=build_dashboard_keyboard(),
+        )
 
 
 @router.callback_query(F.data == CALLBACK_SHOW_NODES)
@@ -1351,6 +1660,7 @@ async def show_nodes_callback(callback: CallbackQuery) -> None:
     if not callback.from_user or callback.from_user.id not in settings.admin_telegram_ids:
         await callback.answer("无权访问。", show_alert=True)
         return
+    cancel_active_flow(callback.from_user.id)
     text, keyboard = await render_nodes_response()
     await safe_edit_callback_message(callback, text, keyboard)
 
@@ -1360,6 +1670,7 @@ async def show_traffic_callback(callback: CallbackQuery) -> None:
     if not callback.from_user or callback.from_user.id not in settings.admin_telegram_ids:
         await callback.answer("无权访问。", show_alert=True)
         return
+    cancel_active_flow(callback.from_user.id)
     text, keyboard = await render_traffic_response()
     await safe_edit_callback_message(callback, text, keyboard)
 
@@ -1369,8 +1680,82 @@ async def show_daily_callback(callback: CallbackQuery) -> None:
     if not callback.from_user or callback.from_user.id not in settings.admin_telegram_ids:
         await callback.answer("无权访问。", show_alert=True)
         return
+    cancel_active_flow(callback.from_user.id)
     text, keyboard = await render_daily_response()
     await safe_edit_callback_message(callback, text, keyboard)
+
+
+@router.callback_query(F.data == CALLBACK_SHOW_SETTINGS)
+async def show_settings_callback(callback: CallbackQuery) -> None:
+    if not callback.from_user or callback.from_user.id not in settings.admin_telegram_ids:
+        await callback.answer("无权访问。", show_alert=True)
+        return
+    cancel_active_flow(callback.from_user.id)
+    await safe_edit_callback_message(callback, build_settings_menu_text(), build_settings_keyboard())
+
+
+@router.callback_query(F.data == CALLBACK_DAILY_SCHEDULE)
+async def daily_schedule_callback(callback: CallbackQuery) -> None:
+    if not callback.from_user or callback.from_user.id not in settings.admin_telegram_ids:
+        await callback.answer("无权访问。", show_alert=True)
+        return
+    cancel_active_flow(callback.from_user.id)
+    text = await render_daily_schedule_response()
+    await safe_edit_callback_message(callback, text, build_daily_schedule_keyboard())
+
+
+@router.callback_query(F.data == CALLBACK_DAILY_TIME_EDIT)
+async def daily_time_edit_callback(callback: CallbackQuery) -> None:
+    if not callback.from_user or callback.from_user.id not in settings.admin_telegram_ids:
+        await callback.answer("无权访问。", show_alert=True)
+        return
+    begin_text_input(callback.from_user.id, "daily_time")
+    await safe_edit_callback_message(callback, build_daily_time_prompt_text(), build_input_cancel_keyboard())
+
+
+@router.callback_query(F.data == CALLBACK_QUOTA_HELP)
+async def quota_help_callback(callback: CallbackQuery) -> None:
+    if not callback.from_user or callback.from_user.id not in settings.admin_telegram_ids:
+        await callback.answer("无权访问。", show_alert=True)
+        return
+    cancel_active_flow(callback.from_user.id)
+    text = "\n\n".join(render_quota_help_lines())
+    await safe_edit_callback_message(callback, text, build_command_help_keyboard())
+
+
+@router.callback_query(F.data == CALLBACK_COMMAND_HELP)
+async def command_help_callback(callback: CallbackQuery) -> None:
+    if not callback.from_user or callback.from_user.id not in settings.admin_telegram_ids:
+        await callback.answer("无权访问。", show_alert=True)
+        return
+    cancel_active_flow(callback.from_user.id)
+    await safe_edit_callback_message(callback, build_command_help_text(), build_command_help_keyboard())
+
+
+@router.callback_query(F.data == CALLBACK_START_ENROLL)
+async def start_enroll_callback(callback: CallbackQuery) -> None:
+    if not callback.from_user or callback.from_user.id not in settings.admin_telegram_ids:
+        await callback.answer("无权访问。", show_alert=True)
+        return
+    begin_text_input(callback.from_user.id, "enroll_name")
+    await safe_edit_callback_message(callback, build_enrollment_prompt_text(), build_input_cancel_keyboard())
+
+
+@router.callback_query(F.data == CALLBACK_INPUT_CANCEL)
+async def input_cancel_callback(callback: CallbackQuery) -> None:
+    if not callback.from_user or callback.from_user.id not in settings.admin_telegram_ids:
+        await callback.answer("无权访问。", show_alert=True)
+        return
+    session = BOT_SESSIONS.get(callback.from_user.id)
+    pending_input = session.pending_input if session is not None else None
+    if not cancel_active_flow(callback.from_user.id):
+        await callback.answer("当前没有待取消的操作。")
+        return
+    if pending_input == "daily_time":
+        text, keyboard = build_settings_menu_text(), build_settings_keyboard()
+    else:
+        text, keyboard = await render_nodes_response()
+    await safe_edit_callback_message(callback, "✅ 已取消当前操作。\n\n" + text, keyboard)
 
 
 @router.callback_query(F.data == CALLBACK_DNS_HOME)
@@ -1378,6 +1763,7 @@ async def dns_home_callback(callback: CallbackQuery) -> None:
     if not callback.from_user or callback.from_user.id not in settings.admin_telegram_ids:
         await callback.answer("无权访问。", show_alert=True)
         return
+    cancel_active_flow(callback.from_user.id)
     reset_dns_session(callback.from_user.id)
     text, keyboard = await render_dns_home()
     await safe_edit_callback_message(callback, text, keyboard)
@@ -1679,6 +2065,32 @@ async def dns_cancel_callback(callback: CallbackQuery) -> None:
         text = html_error("☁️ DNS 管理", exc)
         keyboard = build_single_action_keyboard(CALLBACK_DNS_HOME)
     await safe_edit_callback_message(callback, text, keyboard)
+
+
+@router.callback_query(F.data.startswith(CALLBACK_NODE_DIAG_PREFIX))
+async def node_diag_callback(callback: CallbackQuery) -> None:
+    if not callback.from_user or callback.from_user.id not in settings.admin_telegram_ids:
+        await callback.answer("无权访问。", show_alert=True)
+        return
+    node_name = callback.data[len(CALLBACK_NODE_DIAG_PREFIX) :]
+    try:
+        text = await render_traffic_diag_response(node_name)
+    except TrafficDiagnosisError as exc:
+        text = html_error("流量诊断", exc)
+    await safe_edit_callback_message(callback, text, build_node_quota_keyboard(node_name))
+
+
+@router.callback_query(F.data.startswith(CALLBACK_NODE_QUOTA_PREFIX))
+async def node_quota_callback(callback: CallbackQuery) -> None:
+    if not callback.from_user or callback.from_user.id not in settings.admin_telegram_ids:
+        await callback.answer("无权访问。", show_alert=True)
+        return
+    node_name = callback.data[len(CALLBACK_NODE_QUOTA_PREFIX) :]
+    try:
+        text = await render_node_quota_management_response(node_name)
+    except QuotaServiceError as exc:
+        text = html_error("流量套餐", exc)
+    await safe_edit_callback_message(callback, text, build_node_quota_keyboard(node_name))
 
 
 @router.callback_query(F.data.startswith(CALLBACK_NODE_PREFIX))
