@@ -14,6 +14,14 @@ from proxypulse.core.models import MetricSnapshot, Node, ReportRun
 settings = get_settings()
 
 
+def _network_snapshot_filters():
+    return (
+        MetricSnapshot.rx_bytes.is_not(None),
+        MetricSnapshot.tx_bytes.is_not(None),
+        MetricSnapshot.uptime_seconds.is_not(None),
+    )
+
+
 @dataclass(slots=True)
 class NodeTrafficSummary:
     node_name: str
@@ -104,6 +112,11 @@ def accumulate_counter_values(values: list[int]) -> int:
 
 
 def accumulate_snapshot_traffic(snapshots: list[MetricSnapshot]) -> tuple[int, int]:
+    snapshots = [
+        snapshot
+        for snapshot in snapshots
+        if snapshot.rx_bytes is not None and snapshot.tx_bytes is not None and snapshot.uptime_seconds is not None
+    ]
     if not snapshots:
         return 0, 0
     rx_total = 0
@@ -148,7 +161,10 @@ async def sum_snapshot_traffic_by_node(
             order_by=(MetricSnapshot.created_at.desc(), MetricSnapshot.id.desc()),
         )
         .label("row_number"),
-    ).where(MetricSnapshot.created_at < _db_datetime(start_at))
+    ).where(
+        *_network_snapshot_filters(),
+        MetricSnapshot.created_at < _db_datetime(start_at),
+    )
     if node_ids is not None:
         if not node_ids:
             return {}
@@ -181,6 +197,7 @@ async def sum_snapshot_traffic_by_node(
         .over(partition_by=MetricSnapshot.node_id, order_by=order_columns)
         .label("previous_uptime_seconds"),
     ).where(
+        *_network_snapshot_filters(),
         or_(
             MetricSnapshot.id.in_(baseline_ids),
             (

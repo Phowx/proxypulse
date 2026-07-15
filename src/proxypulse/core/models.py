@@ -7,6 +7,7 @@ from datetime import datetime
 from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Index, Integer, JSON, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from proxypulse.core.collections import STANDARD_COLLECTIONS
 from proxypulse.core.db import Base
 
 
@@ -29,6 +30,11 @@ class Node(Base):
     hostname: Mapped[str | None] = mapped_column(String(255), nullable=True)
     platform: Mapped[str | None] = mapped_column(String(255), nullable=True)
     ips: Mapped[list[str]] = mapped_column(JSON, default=list)
+    collection_scope: Mapped[list[str]] = mapped_column(
+        JSON,
+        default=lambda: list(STANDARD_COLLECTIONS),
+        nullable=False,
+    )
     enrollment_token: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
     agent_token: Mapped[str | None] = mapped_column(String(120), nullable=True, unique=True, index=True)
     status: Mapped[NodeStatus] = mapped_column(Enum(NodeStatus), default=NodeStatus.pending, nullable=False)
@@ -81,19 +87,19 @@ class MetricSnapshot(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     node_id: Mapped[str] = mapped_column(ForeignKey("nodes.id", ondelete="CASCADE"), index=True)
-    cpu_percent: Mapped[float] = mapped_column(Float, nullable=False)
-    memory_percent: Mapped[float] = mapped_column(Float, nullable=False)
-    disk_percent: Mapped[float] = mapped_column(Float, nullable=False)
-    load_avg_1m: Mapped[float] = mapped_column(Float, nullable=False)
+    cpu_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
+    memory_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
+    disk_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
+    load_avg_1m: Mapped[float | None] = mapped_column(Float, nullable=True)
     cpu_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     memory_total_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     memory_used_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     disk_total_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     disk_used_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     network_interface: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    rx_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
-    tx_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
-    uptime_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+    rx_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    tx_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    uptime_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

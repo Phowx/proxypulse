@@ -97,6 +97,9 @@ async def build_traffic_diagnosis(
 
     window_filter = (
         MetricSnapshot.node_id == node.id,
+        MetricSnapshot.rx_bytes.is_not(None),
+        MetricSnapshot.tx_bytes.is_not(None),
+        MetricSnapshot.uptime_seconds.is_not(None),
         MetricSnapshot.created_at >= _db_datetime(window_start),
         MetricSnapshot.created_at <= _db_datetime(now),
     )
@@ -130,7 +133,12 @@ async def build_traffic_diagnosis(
             MetricSnapshot.tx_bytes,
             MetricSnapshot.uptime_seconds,
         )
-        .where(MetricSnapshot.node_id == node.id)
+        .where(
+            MetricSnapshot.node_id == node.id,
+            MetricSnapshot.rx_bytes.is_not(None),
+            MetricSnapshot.tx_bytes.is_not(None),
+            MetricSnapshot.uptime_seconds.is_not(None),
+        )
         .order_by(MetricSnapshot.created_at.desc())
         .limit(recent_limit)
     )

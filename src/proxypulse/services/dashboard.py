@@ -112,7 +112,12 @@ async def get_current_rate_map(session: AsyncSession, node_ids: list[str]) -> di
                 MetricSnapshot.tx_bytes,
                 MetricSnapshot.uptime_seconds,
             )
-            .where(MetricSnapshot.node_id == node_id)
+            .where(
+                MetricSnapshot.node_id == node_id,
+                MetricSnapshot.rx_bytes.is_not(None),
+                MetricSnapshot.tx_bytes.is_not(None),
+                MetricSnapshot.uptime_seconds.is_not(None),
+            )
             .order_by(MetricSnapshot.created_at.desc())
             .limit(2)
         )

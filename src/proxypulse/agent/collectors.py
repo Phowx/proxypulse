@@ -1,32 +1,40 @@
 from __future__ import annotations
 
+import logging
 import os
 import socket
 import time
-from dataclasses import dataclass
+from collections.abc import Iterable
+from dataclasses import asdict, dataclass
 from functools import lru_cache
 
 import psutil
 
+from proxypulse.core.collections import STANDARD_COLLECTIONS
+
 IGNORED_INTERFACE_PREFIXES = ("lo", "docker", "br-", "veth", "cni", "flannel", "virbr")
+logger = logging.getLogger(__name__)
 AGGREGATE_INTERFACE_NAME = "aggregate"
 
 
 @dataclass(slots=True)
 class CollectedMetrics:
-    cpu_percent: float
-    memory_percent: float
-    memory_total_bytes: int
-    memory_used_bytes: int
-    disk_percent: float
-    disk_total_bytes: int
-    disk_used_bytes: int
-    load_avg_1m: float
-    cpu_count: int
-    network_interface: str
-    rx_bytes: int
-    tx_bytes: int
-    uptime_seconds: int
+    cpu_percent: float | None = None
+    memory_percent: float | None = None
+    memory_total_bytes: int | None = None
+    memory_used_bytes: int | None = None
+    disk_percent: float | None = None
+    disk_total_bytes: int | None = None
+    disk_used_bytes: int | None = None
+    load_avg_1m: float | None = None
+    cpu_count: int | None = None
+    network_interface: str | None = None
+    rx_bytes: int | None = None
+    tx_bytes: int | None = None
+    uptime_seconds: int | None = None
+
+    def as_payload(self) -> dict[str, float | int | str | None]:
+        return asdict(self)
 
 
 def _is_ignored_interface(interface: str) -> bool:
@@ -122,30 +130,56 @@ def _collect_network_totals(network_interface: str, network_interface_strategy: 
     return _aggregate_counters()
 
 
-def collect_metrics(network_interface: str, network_interface_strategy: str) -> CollectedMetrics:
-    memory = psutil.virtual_memory()
-    disk = psutil.disk_usage("/")
-    selected_network_interface, (rx_bytes, tx_bytes) = _collect_network_totals(
-        network_interface,
-        network_interface_strategy,
-    )
-    cpu_percent = psutil.cpu_percent(interval=None)
-    memory_percent = memory.percent
-    disk_percent = disk.percent
-    load_avg_1m = os.getloadavg()[0] if hasattr(os, "getloadavg") else 0.0
-    uptime_seconds = int(time.time() - psutil.boot_time())
-    return CollectedMetrics(
-        cpu_percent=cpu_percent,
-        memory_percent=memory_percent,
-        memory_total_bytes=int(memory.total),
-        memory_used_bytes=int(memory.used),
-        disk_percent=disk_percent,
-        disk_total_bytes=int(disk.total),
-        disk_used_bytes=int(disk.used),
-        load_avg_1m=load_avg_1m,
-        cpu_count=psutil.cpu_count() or 0,
-        network_interface=selected_network_interface,
-        rx_bytes=rx_bytes,
-        tx_bytes=tx_bytes,
-        uptime_seconds=uptime_seconds,
-    )
+def collect_metrics(
+    network_interface: str,
+    network_interface_strategy: str,
+    collections: Iterable[str] = STANDARD_COLLECTIONS,
+) -> CollectedMetrics:
+    enabled = set(collections)
+    metrics = CollectedMetrics()
+
+    if "cpu" in enabled:
+        try:
+            metrics.cpu_percent = psutil.cpu_percent(interval=None)
+            metrics.load_avg_1m = os.getloadavg()[0] if hasattr(os, "getloadavg") else 0.0
+            metrics.cpu_count = psutil.cpu_count() or 0
+        except Exception:
+            logger.exception("CPU collection failed")
+
+    if "memory" in enabled:
+        try:
+            memory = psutil.virtual_memory()
+            metrics.memory_percent = memory.percent
+            metrics.memory_total_bytes = int(memory.total)
+            metrics.memory_used_bytes = int(memory.used)
+        except Exception:
+            logger.exception("Memory collection failed")
+
+    if "disk" in enabled:
+        try:
+            disk = psutil.disk_usage("/")
+            metrics.disk_percent = disk.percent
+            metrics.disk_total_bytes = int(disk.total)
+            metrics.disk_used_bytes = int(disk.used)
+        except Exception:
+            logger.exception("Disk collection failed")
+
+    if "network" in enabled:
+        try:
+            selected_interface, (rx_bytes, tx_bytes) = _collect_network_totals(
+                network_interface,
+                network_interface_strategy,
+            )
+            metrics.network_interface = selected_interface
+            metrics.rx_bytes = rx_bytes
+            metrics.tx_bytes = tx_bytes
+        except Exception:
+            logger.exception("Network collection failed")
+
+    if "uptime" in enabled:
+        try:
+            metrics.uptime_seconds = int(time.time() - psutil.boot_time())
+        except Exception:
+            logger.exception("Uptime collection failed")
+
+    return metrics

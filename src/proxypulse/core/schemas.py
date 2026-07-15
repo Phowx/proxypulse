@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from proxypulse.core.collections import STANDARD_COLLECTIONS, normalize_collections
 from proxypulse.core.models import NodeStatus
 
 
@@ -18,6 +19,14 @@ class AgentRegisterRequest(BaseModel):
     hostname: str | None = None
     platform: str | None = None
     ips: list[str] = Field(default_factory=list)
+    collections: list[str] | None = None
+
+    @field_validator("collections")
+    @classmethod
+    def validate_collections(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        return list(normalize_collections(value))
 
 
 class AgentRegisterResponse(BaseModel):
@@ -29,26 +38,41 @@ class HeartbeatRequest(BaseModel):
     hostname: str | None = None
     platform: str | None = None
     ips: list[str] = Field(default_factory=list)
+    collections: list[str] | None = None
+
+    @field_validator("collections")
+    @classmethod
+    def validate_collections(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        return list(normalize_collections(value))
 
 
 class MetricSnapshotIn(BaseModel):
-    cpu_percent: float
-    memory_percent: float
+    cpu_percent: float | None = None
+    memory_percent: float | None = None
     memory_total_bytes: int | None = None
     memory_used_bytes: int | None = None
-    disk_percent: float
+    disk_percent: float | None = None
     disk_total_bytes: int | None = None
     disk_used_bytes: int | None = None
-    load_avg_1m: float
+    load_avg_1m: float | None = None
     cpu_count: int | None = None
     network_interface: str | None = None
-    rx_bytes: int
-    tx_bytes: int
-    uptime_seconds: int
+    rx_bytes: int | None = None
+    tx_bytes: int | None = None
+    uptime_seconds: int | None = None
+
+    @model_validator(mode="after")
+    def require_metric(self) -> "MetricSnapshotIn":
+        values = self.model_dump(exclude={"network_interface"}).values()
+        if all(value is None for value in values):
+            raise ValueError("at least one metric value is required")
+        return self
 
 
 class NodeSummary(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
     id: str
     name: str
@@ -57,6 +81,10 @@ class NodeSummary(BaseModel):
     status: NodeStatus
     is_online: bool
     last_seen_at: datetime | None
+    collections: list[str] = Field(
+        default_factory=lambda: list(STANDARD_COLLECTIONS),
+        validation_alias=AliasChoices("collections", "collection_scope"),
+    )
     latest_cpu_percent: float | None
     latest_memory_percent: float | None
     latest_disk_percent: float | None

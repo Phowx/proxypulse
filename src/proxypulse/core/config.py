@@ -11,6 +11,7 @@ from typing import Literal
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from proxypulse.core.collections import STANDARD_COLLECTIONS, normalize_collections
 
 @dataclass(frozen=True, slots=True)
 class CloudflareZoneConfig:
@@ -42,12 +43,21 @@ class Settings(BaseSettings):
     agent_enrollment_token: str = ""
     network_interface: str = ""
     network_interface_strategy: Literal["auto", "fixed", "aggregate"] = "auto"
+    collections_raw: str = Field(
+        default=",".join(STANDARD_COLLECTIONS),
+        alias="collections",
+    )
     request_timeout_seconds: float = 10.0
     offline_after_seconds: int = 90
     maintenance_interval_seconds: int = 30
     report_timezone: str = "Asia/Shanghai"
     daily_report_hour: int = 9
     daily_report_minute: int = 0
+
+    @property
+    def collections(self) -> tuple[str, ...]:
+        raw_value = os.getenv("PROXYPULSE_COLLECTIONS", self.collections_raw)
+        return normalize_collections(raw_value)
 
     @property
     def admin_telegram_ids(self) -> set[int]:

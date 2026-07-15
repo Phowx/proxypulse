@@ -13,7 +13,17 @@ from proxypulse.core.config import get_settings
 from proxypulse.core.models import MetricSnapshot, Node, TrafficQuotaCycle
 from proxypulse.services.reports import format_bytes
 
+
+
 settings = get_settings()
+
+
+def _network_snapshot_filters():
+    return (
+        MetricSnapshot.rx_bytes.is_not(None),
+        MetricSnapshot.tx_bytes.is_not(None),
+        MetricSnapshot.uptime_seconds.is_not(None),
+    )
 GIB = 1024**3
 
 
@@ -111,6 +121,7 @@ async def _find_first_snapshot_in_window(session: AsyncSession, node_id: str, st
         select(MetricSnapshot)
         .where(
             MetricSnapshot.node_id == node_id,
+            *_network_snapshot_filters(),
             MetricSnapshot.created_at >= _db_datetime(start_at),
             MetricSnapshot.created_at < _db_datetime(end_at),
         )
@@ -125,6 +136,7 @@ async def _find_last_snapshot_before(session: AsyncSession, node_id: str, start_
         select(MetricSnapshot)
         .where(
             MetricSnapshot.node_id == node_id,
+            *_network_snapshot_filters(),
             MetricSnapshot.created_at < _db_datetime(start_at),
         )
         .order_by(MetricSnapshot.created_at.desc(), MetricSnapshot.id.desc())
@@ -142,6 +154,7 @@ async def _find_last_snapshot_at_or_before(
         select(MetricSnapshot)
         .where(
             MetricSnapshot.node_id == node_id,
+            *_network_snapshot_filters(),
             MetricSnapshot.created_at <= _db_datetime(end_at),
         )
         .order_by(MetricSnapshot.created_at.desc(), MetricSnapshot.id.desc())
@@ -181,6 +194,7 @@ async def _sum_total_usage_in_window(
         )
         .where(
             MetricSnapshot.node_id == node_id,
+            *_network_snapshot_filters(),
             MetricSnapshot.created_at >= _db_datetime(start_at),
             MetricSnapshot.created_at < _db_datetime(end_at),
         )
@@ -376,6 +390,8 @@ async def configure_interval_quota(
 async def calibrate_quota_usage(session: AsyncSession, node: Node, *, used_gib: float) -> None:
     if node.traffic_quota_limit_bytes is None or node.traffic_quota_cycle_type is None:
         raise QuotaServiceError("请先为该节点配置流量套餐。")
+    if node.latest_rx_bytes is None or node.latest_tx_bytes is None:
+        raise QuotaServiceError("该节点未启用或尚未上报网络流量。")
 
     node.traffic_quota_calibrated_usage_bytes = _bytes_from_gib(used_gib)
     node.traffic_quota_calibrated_total_bytes = _current_total_bytes(node)

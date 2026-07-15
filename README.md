@@ -1,107 +1,92 @@
 # ProxyPulse
 
-ProxyPulse 是一个以 Telegram 为操作入口的私人代理节点监控工具：Server 接收指标并提供 Bot 控制台，Agent 负责采集节点资源与流量数据。
+ProxyPulse 是一个以 Telegram 为操作入口的私人节点监控工具：Server 提供 API 与 Bot，Agent 负责按需采集资源和流量数据。
 
 ## 功能
 
 - 节点注册、在线状态、资源指标与流量统计
 - 每日流量报告和流量套餐周期管理
 - Telegram 节点管理、诊断与 Cloudflare DNS 管理
+- 可选采集范围与隐私模式
 - SQLite（默认）或 PostgreSQL
-- Server / Agent 的 systemd 部署与完整卸载
+- Server / Agent 的交互式安装、状态查看和分角色卸载
 
-## 环境要求
+## 快速部署
 
-- Linux + systemd
-- Python 3.11+
-- `git`、`python3-venv`、`python3-pip`
-- Server 地址可被 Agent 访问；可开放 `8080`，或反向代理到 `127.0.0.1:8080`
+要求 Linux、systemd、Git 和 Python 3.11+。Debian/Ubuntu 缺少 Python 组件时，交互脚本可安装 `python3`、`python3-venv`、`python3-pip`。
 
 ```bash
-sudo apt update
-sudo apt install -y git python3 python3-venv python3-pip
 git clone https://github.com/Phowx/proxypulse.git /opt/proxypulse
 cd /opt/proxypulse
+bash deploy/manage.sh
 ```
 
-## 部署 Server
+菜单将各项操作分开：
+
+```text
+1  安装或更新 Server
+2  安装或更新 Agent
+3  重新配置 Agent 采集范围
+4  查看服务状态
+5  卸载 Server
+6  卸载 Agent
+7  完全卸载 Server 与 Agent
+0  退出
+```
+
+首次使用先安装 Server，按提示填写 Bot Token、管理员 Telegram ID 和 Server URL；然后向 Bot 发送 `/enroll my-node` 获取 Agent 接入令牌，再在节点机器安装 Agent。
+
+## 采集范围
+
+安装或重新配置 Agent 时可选择：
+
+- 标准：主机身份、CPU、内存、根磁盘、网络流量、运行时长
+- 隐私：关闭主机名、系统信息和本地 IP，其余保持启用
+- 流量：仅采集网络累计流量和运行时长
+- 自定义：从以上六项逐项选择
+
+网络流量依赖运行时长识别重启和计数器重置；选择网络时会自动启用运行时长。未启用的项目在 Bot 中显示为“未启用”，不会显示伪造的零值。
+
+## 自动化入口
+
+现有无菜单脚本仍可单独调用；配置不存在时会从模板创建，已有配置不会被覆盖：
 
 ```bash
 bash deploy/install-server.sh
-sudoedit /etc/proxypulse/server.env
-sudo systemctl restart proxypulse-api proxypulse-bot
-```
-
-至少配置：
-
-```env
-PROXYPULSE_BOT_TOKEN=你的 Telegram Bot Token
-PROXYPULSE_ADMIN_TELEGRAM_IDS=你的 Telegram 用户 ID
-PROXYPULSE_SERVER_URL=https://你的服务端地址
-```
-
-验证：
-
-```bash
-sudo systemctl status proxypulse-api proxypulse-bot
-curl http://127.0.0.1:8080/health
-```
-
-向 Bot 发送 `/start` 打开控制台，发送 `/enroll my-node` 生成 Agent 的一次性接入令牌。
-
-## 部署 Agent
-
-```bash
 bash deploy/install-agent.sh
-sudoedit /etc/proxypulse/agent.env
-sudo systemctl restart proxypulse-agent
+
+bash deploy/uninstall.sh --server
+bash deploy/uninstall.sh --agent
+bash deploy/uninstall.sh --all
 ```
 
-至少配置：
-
-```env
-PROXYPULSE_SERVER_URL=https://你的服务端地址
-PROXYPULSE_AGENT_NAME=my-node
-PROXYPULSE_AGENT_ENROLLMENT_TOKEN=Bot 返回的一次性令牌
-```
-
-验证：
+非交互卸载可加 `--yes`。仅卸载 Server 时默认保留 SQLite 数据，需要同时删除时使用：
 
 ```bash
-sudo systemctl status proxypulse-agent
+bash deploy/uninstall.sh --server --yes --delete-data
+```
+
+`bash deploy/uninstall.sh --yes` 为兼容入口，等同完全卸载。
+
+## 状态与日志
+
+可通过交互菜单查看三个服务的安装、启用和运行状态，也可直接运行：
+
+```bash
+sudo systemctl status proxypulse-api proxypulse-bot proxypulse-agent
+sudo journalctl -u proxypulse-api -u proxypulse-bot -f
 sudo journalctl -u proxypulse-agent -f
 ```
 
-随后在 Telegram 中发送 `/nodes` 确认节点上线。网卡策略等完整配置见 `deploy/env/agent.env.example`。
+## 卸载说明
 
-## 常用操作
+- 卸载 Server：移除 API/Bot 与 Server 配置，可选择是否删除默认 SQLite 数据
+- 卸载 Agent：移除 Agent、Agent 配置和本地接入状态
+- 完全卸载：移除 Server、Agent、全部配置、状态、默认数据库和共享虚拟环境
 
-```bash
-# Server 日志
-sudo journalctl -u proxypulse-api -u proxypulse-bot -f
+源码仓库不会自动删除。所有角色卸载完成且没有保留数据库时，脚本会打印经过转义的源码删除命令。外部数据库、反向代理、防火墙规则和系统 Python 不在清理范围内。
 
-# 升级当前机器上的角色
-git pull
-bash deploy/install-server.sh  # Server
-bash deploy/install-agent.sh   # Agent
-```
-
-安装脚本不会覆盖已有的 `/etc/proxypulse/*.env`。
-
-## 完整卸载
-
-以下命令会同时卸载 Server 和 Agent，删除 systemd 服务、配置、Agent 状态、`.venv` 和默认的 `proxypulse.db`：
-
-```bash
-bash deploy/uninstall.sh
-
-# 非交互执行
-bash deploy/uninstall.sh --yes
-```
-
-源码仓库不会自动删除；卸载完成后脚本会打印源码删除命令。自定义数据库、反向代理、防火墙规则和系统 Python 不在清理范围内。
-
-## 配置模板
+配置模板：
 
 - Server：`deploy/env/server.env.example`
 - Agent：`deploy/env/agent.env.example`

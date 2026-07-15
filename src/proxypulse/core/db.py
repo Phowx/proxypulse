@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.orm import DeclarativeBase
 
 from proxypulse.core.config import get_settings
-
+from proxypulse.core.migrations import migrate_collection_schema
 
 class Base(DeclarativeBase):
     pass
@@ -25,10 +25,14 @@ async def init_db() -> None:
         await conn.run_sync(Base.metadata.create_all)
         if settings.database_url.startswith("sqlite"):
             await _migrate_sqlite_schema(conn)
+        await migrate_collection_schema(conn)
         await _ensure_metric_snapshot_indexes(conn)
 
 
 async def _ensure_metric_snapshot_indexes(conn) -> None:
+    await conn.execute(
+        text("CREATE INDEX IF NOT EXISTS ix_metric_snapshots_node_id ON metric_snapshots (node_id)")
+    )
     await conn.execute(
         text("CREATE INDEX IF NOT EXISTS ix_metric_snapshots_created_at ON metric_snapshots (created_at)")
     )

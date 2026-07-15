@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from proxypulse.core.collections import STANDARD_COLLECTIONS
 from proxypulse.core.config import get_settings
 from proxypulse.core.models import MetricSnapshot, Node, NodeStatus
 from proxypulse.core.schemas import AgentRegisterRequest, HeartbeatRequest, MetricSnapshotIn
@@ -43,6 +44,46 @@ async def create_or_refresh_enrollment(session: AsyncSession, name: str) -> Node
     return node
 
 
+def _effective_scope(collections: list[str] | None) -> list[str]:
+    return list(collections or STANDARD_COLLECTIONS)
+
+
+def _apply_identity(node: Node, payload: AgentRegisterRequest | HeartbeatRequest) -> None:
+    if "identity" not in node.collection_scope:
+        node.hostname = None
+        node.platform = None
+        node.ips = []
+        return
+    if payload.hostname:
+        node.hostname = payload.hostname
+    if payload.platform:
+        node.platform = payload.platform
+    if payload.ips:
+        node.ips = payload.ips
+
+
+def _clear_disabled_latest_metrics(node: Node) -> None:
+    enabled = set(node.collection_scope)
+    if "cpu" not in enabled:
+        node.latest_cpu_percent = None
+        node.latest_load_avg_1m = None
+        node.latest_cpu_count = None
+    if "memory" not in enabled:
+        node.latest_memory_percent = None
+        node.latest_memory_total_bytes = None
+        node.latest_memory_used_bytes = None
+    if "disk" not in enabled:
+        node.latest_disk_percent = None
+        node.latest_disk_total_bytes = None
+        node.latest_disk_used_bytes = None
+    if "network" not in enabled:
+        node.latest_network_interface = None
+        node.latest_rx_bytes = None
+        node.latest_tx_bytes = None
+    if "uptime" not in enabled:
+        node.latest_uptime_seconds = None
+
+
 async def register_agent(session: AsyncSession, payload: AgentRegisterRequest) -> Node:
     result = await session.execute(
         select(Node).where(
@@ -54,9 +95,9 @@ async def register_agent(session: AsyncSession, payload: AgentRegisterRequest) -
     if node is None:
         raise NodeServiceError("接入令牌无效，或节点不存在。")
 
-    node.hostname = payload.hostname
-    node.platform = payload.platform
-    node.ips = payload.ips
+    node.collection_scope = _effective_scope(payload.collections)
+    _apply_identity(node, payload)
+    _clear_disabled_latest_metrics(node)
     node.agent_token = generate_token(24)
     node.enrollment_token = None
     node.last_seen_at = datetime.now(UTC)
@@ -76,10 +117,9 @@ async def get_node_by_agent_token(session: AsyncSession, agent_token: str) -> No
 
 
 async def record_heartbeat(session: AsyncSession, node: Node, payload: HeartbeatRequest) -> Node:
-    node.hostname = payload.hostname or node.hostname
-    node.platform = payload.platform or node.platform
-    if payload.ips:
-        node.ips = payload.ips
+    node.collection_scope = _effective_scope(payload.collections)
+    _apply_identity(node, payload)
+    _clear_disabled_latest_metrics(node)
     node.last_seen_at = datetime.now(UTC)
     node.is_online = True
     node.status = NodeStatus.online
@@ -124,6 +164,7 @@ async def record_metrics(session: AsyncSession, node: Node, payload: MetricSnaps
     node.latest_rx_bytes = payload.rx_bytes
     node.latest_tx_bytes = payload.tx_bytes
 
+    _clear_disabled_latest_metrics(node)
     await session.commit()
     await session.refresh(snapshot)
     return snapshot

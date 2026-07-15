@@ -11,6 +11,7 @@ import psutil
 
 from proxypulse.agent.collectors import collect_metrics
 from proxypulse.agent.state import load_state, save_state
+from proxypulse.core.collections import METRIC_COLLECTIONS
 from proxypulse.core.config import get_settings
 
 settings = get_settings()
@@ -55,6 +56,18 @@ def discover_ips() -> list[str]:
     return sorted(addresses)
 
 
+def identity_payload(collections: tuple[str, ...]) -> dict[str, object]:
+    enabled = tuple(collections)
+    if "identity" not in enabled:
+        return {"hostname": None, "platform": None, "ips": [], "collections": list(enabled)}
+    return {
+        "hostname": socket.gethostname(),
+        "platform": platform.platform(),
+        "ips": discover_ips(),
+        "collections": list(enabled),
+    }
+
+
 async def ensure_registration(client: httpx.AsyncClient, state: dict[str, str]) -> dict[str, str]:
     if state.get("agent_token"):
         return state
@@ -66,9 +79,7 @@ async def ensure_registration(client: httpx.AsyncClient, state: dict[str, str]) 
         json={
             "name": settings.agent_name,
             "enrollment_token": settings.agent_enrollment_token,
-            "hostname": socket.gethostname(),
-            "platform": platform.platform(),
-            "ips": discover_ips(),
+            **identity_payload(settings.collections),
         },
     )
     response.raise_for_status()
@@ -83,52 +94,54 @@ async def post_heartbeat(client: httpx.AsyncClient, token: str) -> None:
     response = await client.post(
         f"{settings.server_url}/agent/heartbeat",
         headers={"Authorization": f"Bearer {token}"},
-        json={
-            "hostname": socket.gethostname(),
-            "platform": platform.platform(),
-            "ips": discover_ips(),
-        },
+        json=identity_payload(settings.collections),
     )
     response.raise_for_status()
 
 
 async def post_metrics(client: httpx.AsyncClient, token: str) -> None:
-    metrics = collect_metrics(settings.network_interface, settings.network_interface_strategy)
+    metrics = collect_metrics(
+        settings.network_interface,
+        settings.network_interface_strategy,
+        settings.collections,
+    )
+    payload = metrics.as_payload()
+    if all(value is None for key, value in payload.items() if key != "network_interface"):
+        logger.warning("All enabled metric collectors failed; skipping empty snapshot.")
+        return
     response = await client.post(
         f"{settings.server_url}/agent/metrics",
         headers={"Authorization": f"Bearer {token}"},
-        json={
-            "cpu_percent": metrics.cpu_percent,
-            "memory_percent": metrics.memory_percent,
-            "memory_total_bytes": metrics.memory_total_bytes,
-            "memory_used_bytes": metrics.memory_used_bytes,
-            "disk_percent": metrics.disk_percent,
-            "disk_total_bytes": metrics.disk_total_bytes,
-            "disk_used_bytes": metrics.disk_used_bytes,
-            "load_avg_1m": metrics.load_avg_1m,
-            "cpu_count": metrics.cpu_count,
-            "network_interface": metrics.network_interface,
-            "rx_bytes": metrics.rx_bytes,
-            "tx_bytes": metrics.tx_bytes,
-            "uptime_seconds": metrics.uptime_seconds,
-        },
+        json=payload,
     )
     response.raise_for_status()
+
+
+async def run_cycle(client: httpx.AsyncClient, token: str) -> None:
+    try:
+        await post_heartbeat(client, token)
+    except httpx.HTTPError:
+        logger.exception("Agent heartbeat failed")
+    if set(settings.collections).intersection(METRIC_COLLECTIONS):
+        try:
+            await post_metrics(client, token)
+        except httpx.HTTPError:
+            logger.exception("Agent metric upload failed")
 
 
 async def run_agent() -> None:
     state = load_state(settings.agent_state_path)
     timeout = httpx.Timeout(settings.request_timeout_seconds)
-    psutil.cpu_percent(interval=None)
+    if "cpu" in settings.collections:
+        psutil.cpu_percent(interval=None)
     # Follow HTTP->HTTPS redirects during server migrations so agents do not
     # drop offline just because the public endpoint was upgraded behind a proxy.
     async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
         state = await ensure_registration(client, state)
         token = state["agent_token"]
-        await post_heartbeat(client, token)
 
         while True:
-            await post_metrics(client, token)
+            await run_cycle(client, token)
             await asyncio.sleep(settings.poll_interval_seconds)
 
 

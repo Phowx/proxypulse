@@ -20,6 +20,11 @@ from aiogram.types import (
 )
 
 from proxypulse.core.config import get_settings
+from proxypulse.bot.collection_formatting import (
+    format_collection_scope,
+    format_scoped_value,
+    format_scoped_values,
+)
 from proxypulse.core.db import SessionLocal, init_db
 from proxypulse.services.dashboard import build_node_detail_summary, build_nodes_dashboard
 from proxypulse.services.cloudflare_dns import (
@@ -656,24 +661,23 @@ def render_quota_detail_html(status) -> list[str]:
 
 def render_node_card(card) -> str:
     node = card.node
-    load_value = f"{node.latest_load_avg_1m:.2f}" if node.latest_load_avg_1m is not None else "暂无"
     body_lines = [
         "<b>资源</b>",
         (
-            f"⚙️ CPU {html_code(format_metric_value(node.latest_cpu_percent))}"
-            f" · 内存 {html_code(format_metric_value(node.latest_memory_percent))}"
-            f" · 磁盘 {html_code(format_metric_value(node.latest_disk_percent))}"
+            f"⚙️ CPU {html_code(format_scoped_value(node, 'cpu', node.latest_cpu_percent, format_metric_value))}"
+            f" · 内存 {html_code(format_scoped_value(node, 'memory', node.latest_memory_percent, format_metric_value))}"
+            f" · 磁盘 {html_code(format_scoped_value(node, 'disk', node.latest_disk_percent, format_metric_value))}"
         ),
         "<b>近 1 小时 · 均值 / 峰值</b>",
         (
-            f"CPU {html_code(format_avg_peak_values(card.trend_1h.avg_cpu_percent, card.trend_1h.peak_cpu_percent))}"
-            f"\n内存 {html_code(format_avg_peak_values(card.trend_1h.avg_memory_percent, card.trend_1h.peak_memory_percent))}"
-            f"\n磁盘 {html_code(format_avg_peak_values(card.trend_1h.avg_disk_percent, card.trend_1h.peak_disk_percent))}"
+            f"CPU {html_code(format_scoped_values(node, 'cpu', [card.trend_1h.avg_cpu_percent, card.trend_1h.peak_cpu_percent], lambda: format_avg_peak_values(card.trend_1h.avg_cpu_percent, card.trend_1h.peak_cpu_percent)))}"
+            f"\n内存 {html_code(format_scoped_values(node, 'memory', [card.trend_1h.avg_memory_percent, card.trend_1h.peak_memory_percent], lambda: format_avg_peak_values(card.trend_1h.avg_memory_percent, card.trend_1h.peak_memory_percent)))}"
+            f"\n磁盘 {html_code(format_scoped_values(node, 'disk', [card.trend_1h.avg_disk_percent, card.trend_1h.peak_disk_percent], lambda: format_avg_peak_values(card.trend_1h.avg_disk_percent, card.trend_1h.peak_disk_percent)))}"
         ),
         (
-            f"🧭 {html_code(format_integer_value(node.latest_cpu_count))} 核"
-            f" · 负载 {html_code(load_value)}"
-            f" · 运行 {html_code(format_uptime(node.latest_uptime_seconds))}"
+            f"🧭 {html_code(format_scoped_value(node, 'cpu', node.latest_cpu_count, format_integer_value))} 核"
+            f" · 负载 {html_code(format_scoped_value(node, 'cpu', node.latest_load_avg_1m, lambda value: f'{value:.2f}'))}"
+            f" · 运行 {html_code(format_scoped_value(node, 'uptime', node.latest_uptime_seconds, format_uptime))}"
         ),
         "",
         "<b>套餐</b>",
@@ -783,7 +787,6 @@ async def render_node_detail(node_name: str) -> tuple[str, InlineKeyboardMarkup]
     if node is None:
         return "未找到对应节点。", build_single_action_keyboard(CALLBACK_SHOW_NODES)
 
-    load = f"{node.latest_load_avg_1m:.2f}" if node.latest_load_avg_1m is not None else "暂无"
     title = (
         f"<b>🖥️ {html.escape(node.name)}</b>  {format_status_label(node)}"
         f" · {html.escape(format_relative_time(node.last_seen_at))}"
@@ -792,34 +795,35 @@ async def render_node_detail(node_name: str) -> tuple[str, InlineKeyboardMarkup]
         html_card(
             "基础信息",
             [
-                f"主机 {html_code(node.hostname or '未上报')} · 系统 {html_code(node.platform or '未上报')}",
-                f"IP {html_code(', '.join(node.ips) if node.ips else '未上报')}",
-                f"网卡 {html_code(format_network_interface_label(node.latest_network_interface))}",
+                f"主机 {html_code(format_scoped_value(node, 'identity', node.hostname, str))} · 系统 {html_code(format_scoped_value(node, 'identity', node.platform, str))}",
+                f"IP {html_code(format_scoped_value(node, 'identity', node.ips or None, lambda value: ', '.join(value)))}",
+                f"网卡 {html_code(format_scoped_value(node, 'network', node.latest_network_interface, format_network_interface_label))}",
+                f"采集 {html_code(format_collection_scope(node))}",
             ],
         ),
         html_card(
             "实时状态",
             [
-                f"CPU {html_code(format_metric_value(node.latest_cpu_percent))} · 核心 {html_code(format_integer_value(node.latest_cpu_count))}",
-                f"负载 {html_code(load)} · 运行 {html_code(format_uptime(node.latest_uptime_seconds))}",
-                f"内存 {html_code(format_resource_usage(node.latest_memory_used_bytes, node.latest_memory_total_bytes, node.latest_memory_percent))}",
-                f"磁盘 {html_code(format_resource_usage(node.latest_disk_used_bytes, node.latest_disk_total_bytes, node.latest_disk_percent))}",
+                f"CPU {html_code(format_scoped_value(node, 'cpu', node.latest_cpu_percent, format_metric_value))} · 核心 {html_code(format_scoped_value(node, 'cpu', node.latest_cpu_count, format_integer_value))}",
+                f"负载 {html_code(format_scoped_value(node, 'cpu', node.latest_load_avg_1m, lambda value: f'{value:.2f}'))} · 运行 {html_code(format_scoped_value(node, 'uptime', node.latest_uptime_seconds, format_uptime))}",
+                f"内存 {html_code(format_scoped_values(node, 'memory', [node.latest_memory_used_bytes, node.latest_memory_total_bytes, node.latest_memory_percent], lambda: format_resource_usage(node.latest_memory_used_bytes, node.latest_memory_total_bytes, node.latest_memory_percent)))}",
+                f"磁盘 {html_code(format_scoped_values(node, 'disk', [node.latest_disk_used_bytes, node.latest_disk_total_bytes, node.latest_disk_percent], lambda: format_resource_usage(node.latest_disk_used_bytes, node.latest_disk_total_bytes, node.latest_disk_percent)))}",
             ],
         ),
         html_card(
             "网络流量",
             [
-                f"实时 ↓ {html_code(format_rate_value(detail_summary.current_rate.rx_bps))} · ↑ {html_code(format_rate_value(detail_summary.current_rate.tx_bps))}",
-                f"累计 ↓ {html_code(format_byte_value(node.latest_rx_bytes))} · ↑ {html_code(format_byte_value(node.latest_tx_bytes))}",
+                f"实时 ↓ {html_code(format_scoped_value(node, 'network', detail_summary.current_rate.rx_bps, format_rate_value))} · ↑ {html_code(format_scoped_value(node, 'network', detail_summary.current_rate.tx_bps, format_rate_value))}",
+                f"累计 ↓ {html_code(format_scoped_value(node, 'network', node.latest_rx_bytes, format_byte_value))} · ↑ {html_code(format_scoped_value(node, 'network', node.latest_tx_bytes, format_byte_value))}",
             ],
         ),
         html_card(
             "近 1 小时 · 均值 / 峰值",
             [
-                f"CPU {html_code(format_avg_peak_values(detail_summary.trend_1h.avg_cpu_percent, detail_summary.trend_1h.peak_cpu_percent))}",
-                f"内存 {html_code(format_avg_peak_values(detail_summary.trend_1h.avg_memory_percent, detail_summary.trend_1h.peak_memory_percent))}",
-                f"磁盘 {html_code(format_avg_peak_values(detail_summary.trend_1h.avg_disk_percent, detail_summary.trend_1h.peak_disk_percent))}",
-                f"流量 ↓ {html_code(format_byte_value(detail_summary.trend_1h.rx_bytes))} · ↑ {html_code(format_byte_value(detail_summary.trend_1h.tx_bytes))}",
+                f"CPU {html_code(format_scoped_values(node, 'cpu', [detail_summary.trend_1h.avg_cpu_percent, detail_summary.trend_1h.peak_cpu_percent], lambda: format_avg_peak_values(detail_summary.trend_1h.avg_cpu_percent, detail_summary.trend_1h.peak_cpu_percent)))}",
+                f"内存 {html_code(format_scoped_values(node, 'memory', [detail_summary.trend_1h.avg_memory_percent, detail_summary.trend_1h.peak_memory_percent], lambda: format_avg_peak_values(detail_summary.trend_1h.avg_memory_percent, detail_summary.trend_1h.peak_memory_percent)))}",
+                f"磁盘 {html_code(format_scoped_values(node, 'disk', [detail_summary.trend_1h.avg_disk_percent, detail_summary.trend_1h.peak_disk_percent], lambda: format_avg_peak_values(detail_summary.trend_1h.avg_disk_percent, detail_summary.trend_1h.peak_disk_percent)))}",
+                f"流量 ↓ {html_code(format_scoped_value(node, 'network', detail_summary.trend_1h.rx_bytes, format_byte_value))} · ↑ {html_code(format_scoped_value(node, 'network', detail_summary.trend_1h.tx_bytes, format_byte_value))}",
                 f"样本 {html_code(str(detail_summary.trend_1h.sample_count))}",
             ],
         ),
