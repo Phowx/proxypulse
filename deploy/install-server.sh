@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${ROOT_DIR}/deploy/lib/common.sh"
 source "${ROOT_DIR}/deploy/lib/env.sh"
 source "${ROOT_DIR}/deploy/lib/caddy.sh"
+source "${ROOT_DIR}/deploy/lib/python-install.sh"
 
 ENV_FILE="${ENV_DIR}/server.env"
 
@@ -28,8 +29,7 @@ require_sudo
 if [[ ! -x "${VENV_DIR}/bin/python" ]]; then
   python3 -m venv "${VENV_DIR}"
 fi
-"${VENV_DIR}/bin/pip" install --upgrade pip
-"${VENV_DIR}/bin/pip" install "${ROOT_DIR}"
+install_python_project
 
 install_merged_env "${ROOT_DIR}/deploy/env/server.env.example" "${ENV_FILE}"
 

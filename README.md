@@ -13,7 +13,7 @@ ProxyPulse 是一个以 Telegram 为操作入口的私人节点监控工具：Se
 
 ## 快速部署
 
-要求 Linux、systemd、Git 和 Python 3.11+。Debian/Ubuntu 缺少 Python 或 Caddy 时，交互脚本会安装所需组件。
+要求 Linux、systemd、Git 和 Python 3.11+。Debian/Ubuntu 缺少 Python 或 Caddy 时，交互脚本会安装所需组件。小内存机器建议先配置 swap；可用内存加空闲 swap 不足 256 MiB 时脚本会停止，避免安装过程拖垮系统。
 
 ```bash
 git clone https://github.com/Phowx/proxypulse.git /opt/proxypulse

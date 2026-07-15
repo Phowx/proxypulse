@@ -27,6 +27,23 @@ class DeployManagementTests(TestCase):
         self.assertIn("重新配置 Agent 采集范围", result.stdout)
         self.assertIn("完全卸载 Server 与 Agent", result.stdout)
 
+    def test_installers_disable_isolated_builds(self) -> None:
+        helper = (PROJECT_ROOT / "deploy" / "lib" / "python-install.sh").read_text(
+            encoding="utf-8"
+        )
+        server = (PROJECT_ROOT / "deploy" / "install-server.sh").read_text(
+            encoding="utf-8"
+        )
+        agent = (PROJECT_ROOT / "deploy" / "install-agent.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("--no-build-isolation --editable", helper)
+        self.assertIn("PROXYPULSE_PIP_TIMEOUT_SECONDS", helper)
+        self.assertIn("install_python_project", server)
+        self.assertIn("install_python_project", agent)
+        self.assertNotIn("install --upgrade pip", server + agent)
+
     def test_env_merge_preserves_existing_values_and_creates_backup(self) -> None:
         with tempfile.TemporaryDirectory(dir="/tmp") as temp_dir:
             temp = Path(temp_dir)
