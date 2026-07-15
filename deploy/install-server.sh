@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${ROOT_DIR}/deploy/lib/common.sh"
 source "${ROOT_DIR}/deploy/lib/env.sh"
+source "${ROOT_DIR}/deploy/lib/caddy.sh"
 
 ENV_FILE="${ENV_DIR}/server.env"
 
@@ -30,9 +31,7 @@ fi
 "${VENV_DIR}/bin/pip" install --upgrade pip
 "${VENV_DIR}/bin/pip" install "${ROOT_DIR}"
 
-if ! sudo test -f "${ENV_FILE}"; then
-  install_merged_env "${ROOT_DIR}/deploy/env/server.env.example" "${ENV_FILE}"
-fi
+install_merged_env "${ROOT_DIR}/deploy/env/server.env.example" "${ENV_FILE}"
 
 render_unit "${ROOT_DIR}/deploy/systemd/proxypulse-api.service.in" "${SYSTEMD_DIR}/proxypulse-api.service"
 render_unit "${ROOT_DIR}/deploy/systemd/proxypulse-bot.service.in" "${SYSTEMD_DIR}/proxypulse-bot.service"
@@ -42,8 +41,14 @@ sudo systemctl enable proxypulse-api.service proxypulse-bot.service
 restart_or_explain proxypulse-api.service
 restart_or_explain proxypulse-bot.service
 
+server_url="$(read_env_value "${ENV_FILE}" PROXYPULSE_SERVER_URL)"
+api_port="$(read_env_value "${ENV_FILE}" PROXYPULSE_API_PORT)"
+install_caddy_proxy "${server_url}" "${api_port}"
+
 cat <<EOF
 Server 安装或更新完成。
 配置：${ENV_FILE}
-状态：sudo systemctl status proxypulse-api proxypulse-bot
+API：127.0.0.1:${api_port}
+公网入口：${server_url}
+状态：sudo systemctl status proxypulse-api proxypulse-bot caddy
 EOF

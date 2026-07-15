@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${ROOT_DIR}/deploy/lib/common.sh"
+source "${ROOT_DIR}/deploy/lib/caddy.sh"
 
 scope=""
 assume_yes=false
@@ -79,13 +80,13 @@ fi
 describe_scope() {
   case "$1" in
     server)
-      echo "将删除 API/Bot 服务和 server.env；Agent 保持不变。"
+      echo "将删除 API/Bot 服务、Server 配置和 ProxyPulse 的 Caddy 反代；Agent 保持不变。"
       ;;
     agent)
       echo "将删除 Agent 服务、agent.env 和 Agent 本地接入状态；Server 保持不变。"
       ;;
     all)
-      echo "将删除 Server、Agent、全部配置、状态、默认 SQLite 数据和共享虚拟环境。"
+      echo "将删除 Server、Agent、ProxyPulse 的 Caddy 反代、全部配置、状态、默认 SQLite 数据和共享虚拟环境。"
       ;;
   esac
   echo "源码仓库不会自动删除。"
@@ -118,12 +119,14 @@ agent_remains=false
 case "${scope}" in
   all)
     remove_units proxypulse-api.service proxypulse-bot.service proxypulse-agent.service
+    remove_caddy_proxy
     sudo rm -rf -- "${ENV_DIR}" "${STATE_DIR}"
     rm -rf -- "${VENV_DIR}"
     rm -f -- "${ROOT_DIR}/proxypulse.db"
     ;;
   server)
     remove_units proxypulse-api.service proxypulse-bot.service
+    remove_caddy_proxy
     sudo rm -f -- "${ENV_DIR}/server.env"
     if [[ "${assume_yes}" != true && "${delete_data}" != true ]]; then
       if confirm "同时删除默认 SQLite 数据 ${ROOT_DIR}/proxypulse.db 吗？"; then

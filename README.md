@@ -13,7 +13,7 @@ ProxyPulse 是一个以 Telegram 为操作入口的私人节点监控工具：Se
 
 ## 快速部署
 
-要求 Linux、systemd、Git 和 Python 3.11+。Debian/Ubuntu 缺少 Python 组件时，交互脚本可安装 `python3`、`python3-venv`、`python3-pip`。
+要求 Linux、systemd、Git 和 Python 3.11+。Debian/Ubuntu 缺少 Python 或 Caddy 时，交互脚本会安装所需组件。
 
 ```bash
 git clone https://github.com/Phowx/proxypulse.git /opt/proxypulse
@@ -34,7 +34,9 @@ bash deploy/manage.sh
 0  退出
 ```
 
-首次使用先安装 Server，按提示填写 Bot Token、管理员 Telegram ID 和 Server URL；然后向 Bot 发送 `/enroll my-node` 获取 Agent 接入令牌，再在节点机器安装 Agent。
+首次使用先安装 Server，按提示填写 Bot Token、管理员 Telegram ID、API 本地端口、公网 Server URL 和 Caddy 公网端口。API 默认只监听 `127.0.0.1:8080`，Caddy 自动反代公网入口。然后向 Bot 发送 `/enroll my-node` 获取 Agent 接入令牌，再在节点机器安装 Agent。
+
+公网 URL 只填写协议和域名/IP，不带路径；脚本会按选择的公网端口生成最终 URL。例如域名 `https://monitor.example.com` 配合端口 `8443`，最终入口为 `https://monitor.example.com:8443`。请在云安全组或防火墙中放行该端口；使用公网 HTTPS 域名时，还需确保域名解析正确，并允许 Caddy 完成证书签发所需的验证连接。
 
 ## 采集范围
 
@@ -70,21 +72,21 @@ bash deploy/uninstall.sh --server --yes --delete-data
 
 ## 状态与日志
 
-可通过交互菜单查看三个服务的安装、启用和运行状态，也可直接运行：
+可通过交互菜单查看 ProxyPulse 服务的安装、启用和运行状态，也可直接运行：
 
 ```bash
-sudo systemctl status proxypulse-api proxypulse-bot proxypulse-agent
+sudo systemctl status proxypulse-api proxypulse-bot proxypulse-agent caddy
 sudo journalctl -u proxypulse-api -u proxypulse-bot -f
 sudo journalctl -u proxypulse-agent -f
 ```
 
 ## 卸载说明
 
-- 卸载 Server：移除 API/Bot 与 Server 配置，可选择是否删除默认 SQLite 数据
+- 卸载 Server：移除 API/Bot、Server 配置和 ProxyPulse 的 Caddy 反代，可选择是否删除默认 SQLite 数据
 - 卸载 Agent：移除 Agent、Agent 配置和本地接入状态
 - 完全卸载：移除 Server、Agent、全部配置、状态、默认数据库和共享虚拟环境
 
-源码仓库不会自动删除。所有角色卸载完成且没有保留数据库时，脚本会打印经过转义的源码删除命令。外部数据库、反向代理、防火墙规则和系统 Python 不在清理范围内。
+源码仓库不会自动删除。所有角色卸载完成且没有保留数据库时，脚本会打印经过转义的源码删除命令。Caddy 软件包、Caddy 的其他站点配置、外部数据库、防火墙规则和系统 Python 不在清理范围内。
 
 配置模板：
 

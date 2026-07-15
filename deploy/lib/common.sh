@@ -69,7 +69,7 @@ ensure_python_dependencies() {
 }
 
 service_installed() {
-  sudo test -f "${SYSTEMD_DIR}/$1"
+  sudo systemctl cat "$1" >/dev/null 2>&1
 }
 
 print_service_status() {

@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${ROOT_DIR}/deploy/lib/common.sh"
 source "${ROOT_DIR}/deploy/lib/env.sh"
+source "${ROOT_DIR}/deploy/lib/caddy.sh"
 
 SERVER_ENV="${ENV_DIR}/server.env"
 AGENT_ENV="${ENV_DIR}/agent.env"
@@ -70,6 +71,33 @@ prompt_url() {
       return 0
     fi
     echo "请输入以 http:// 或 https:// 开头的有效 URL。" >&2
+  done
+}
+
+prompt_port() {
+  local label="$1"
+  local default_value="${2:-}"
+  local value=""
+  while true; do
+    value="$(prompt_required "${label}" "${default_value}")"
+    if validate_port "${value}"; then
+      printf '%s' "${value}"
+      return 0
+    fi
+    echo "请输入 1-65535 范围内的端口。" >&2
+  done
+}
+
+prompt_public_server_url() {
+  local default_value="${1:-}"
+  local value=""
+  while true; do
+    value="$(prompt_required "公网 Server URL（如 https://monitor.example.com）" "${default_value}")"
+    if validate_public_server_url "${value}"; then
+      printf '%s' "${value%/}"
+      return 0
+    fi
+    echo "请输入只包含协议、域名或 IP 及可选端口的 URL；不支持路径和查询参数。" >&2
   done
 }
 
@@ -169,23 +197,37 @@ select_network_settings() {
 }
 
 configure_server() {
-  echo "将安装或更新 API 与 Telegram Bot，并写入 ${SERVER_ENV}。"
+  echo "将安装或更新 API、Telegram Bot 与 Caddy 反向代理，并写入 ${SERVER_ENV}。"
+  echo "API 仅监听 127.0.0.1；Agent 通过 Caddy 公网端口访问。"
   echo "现有数据库和未修改的高级配置会保留。"
   ensure_python_dependencies
   require_sudo
 
-  local bot_token admin_ids server_url
+  local bot_token admin_ids server_url local_port public_port current_url current_local_port
   bot_token="$(prompt_required_secret "Telegram Bot Token" "$(read_env_value "${SERVER_ENV}" PROXYPULSE_BOT_TOKEN)")"
   while true; do
     admin_ids="$(prompt_required "管理员 Telegram ID（多个用逗号分隔）" "$(read_env_value "${SERVER_ENV}" PROXYPULSE_ADMIN_TELEGRAM_IDS)")"
     validate_admin_ids "${admin_ids}" && break
     echo "管理员 ID 必须是纯数字，多个 ID 使用英文逗号分隔。" >&2
   done
-  server_url="$(prompt_url "Agent 可访问的 Server URL" "$(read_env_value "${SERVER_ENV}" PROXYPULSE_SERVER_URL || true)")"
+  current_local_port="$(read_env_value "${SERVER_ENV}" PROXYPULSE_API_PORT || true)"
+  local_port="$(prompt_port "API 本地监听端口" "${current_local_port:-8080}")"
+  current_url="$(read_env_value "${SERVER_ENV}" PROXYPULSE_SERVER_URL || true)"
+  server_url="$(prompt_public_server_url "${current_url}")"
+  while true; do
+    public_port="$(prompt_port "Caddy 公网监听端口" "$(server_url_port "${server_url}")")"
+    if [[ "${public_port}" != "${local_port}" ]]; then
+      break
+    fi
+    echo "Caddy 公网端口不能与 API 本地端口相同。" >&2
+  done
+  server_url="$(server_url_with_port "${server_url}" "${public_port}")"
 
   install_merged_env "${ROOT_DIR}/deploy/env/server.env.example" "${SERVER_ENV}" \
     PROXYPULSE_BOT_TOKEN "${bot_token}" \
     PROXYPULSE_ADMIN_TELEGRAM_IDS "${admin_ids}" \
+    PROXYPULSE_API_HOST "127.0.0.1" \
+    PROXYPULSE_API_PORT "${local_port}" \
     PROXYPULSE_SERVER_URL "${server_url}"
   bash "${ROOT_DIR}/deploy/install-server.sh"
 }
@@ -259,6 +301,7 @@ show_status() {
   print_service_status proxypulse-api.service
   print_service_status proxypulse-bot.service
   print_service_status proxypulse-agent.service
+  print_service_status caddy.service
 }
 
 show_menu() {

@@ -109,6 +109,7 @@ class DeployManagementTests(TestCase):
         (repo / "deploy" / "lib").mkdir(parents=True)
         shutil.copy2(PROJECT_ROOT / "deploy" / "uninstall.sh", repo / "deploy" / "uninstall.sh")
         shutil.copy2(PROJECT_ROOT / "deploy" / "lib" / "common.sh", repo / "deploy" / "lib" / "common.sh")
+        shutil.copy2(PROJECT_ROOT / "deploy" / "lib" / "caddy.sh", repo / "deploy" / "lib" / "caddy.sh")
 
         env_dir = temp / "etc" / "proxypulse"
         state_dir = temp / "var" / "lib" / "proxypulse"
@@ -131,6 +132,7 @@ class DeployManagementTests(TestCase):
             "PROXYPULSE_ENV_DIR": str(env_dir),
             "PROXYPULSE_STATE_DIR": str(state_dir),
             "PROXYPULSE_SYSTEMD_DIR": str(systemd_dir),
+            "PROXYPULSE_CADDY_CONFIG_DIR": str(temp / "caddy"),
         }
         return repo, env, {"env": env_dir, "state": state_dir, "systemd": systemd_dir}
 

@@ -41,6 +41,7 @@ class UninstallScriptTests(TestCase):
         shutil.copy2(SCRIPT, deploy_dir / "uninstall.sh")
         (deploy_dir / "lib").mkdir()
         shutil.copy2(PROJECT_ROOT / "deploy" / "lib" / "common.sh", deploy_dir / "lib" / "common.sh")
+        shutil.copy2(PROJECT_ROOT / "deploy" / "lib" / "caddy.sh", deploy_dir / "lib" / "caddy.sh")
 
         (repo_dir / ".venv").mkdir()
         (repo_dir / "proxypulse.db").write_text("database", encoding="utf-8")
