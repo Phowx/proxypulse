@@ -198,3 +198,24 @@ class BotResponseTests(IsolatedAsyncioTestCase):
 
         self.assertEqual(text, "日报")
         self.assertIsNone(keyboard)
+
+    async def test_command_menu_refreshes_private_and_admin_scopes(self) -> None:
+        bot = AsyncMock()
+        with patch.object(
+            bot_main,
+            "settings",
+            SimpleNamespace(admin_telegram_ids={123456}),
+        ):
+            await bot_main.sync_bot_commands(bot)
+
+        self.assertEqual(bot.set_my_commands.await_count, 3)
+        self.assertEqual(bot.delete_my_commands.await_count, 6)
+        self.assertEqual(bot.set_chat_menu_button.await_count, 2)
+        scope_types = {
+            call.kwargs["scope"].type.value
+            for call in bot.set_my_commands.await_args_list
+        }
+        self.assertEqual(
+            scope_types,
+            {"default", "all_private_chats", "chat"},
+        )

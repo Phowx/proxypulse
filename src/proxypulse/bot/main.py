@@ -13,9 +13,13 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandObject
 from aiogram.types import (
     BotCommand,
+    BotCommandScopeAllPrivateChats,
+    BotCommandScopeChat,
+    BotCommandScopeDefault,
     CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    MenuButtonCommands,
     Message,
 )
 
@@ -116,6 +120,26 @@ DNS_TTL_OPTIONS = [
     (3600, "1h"),
 ]
 DNS_PAGE_SIZE = 10
+BOT_COMMANDS = [
+    BotCommand(command="start", description="打开控制台首页"),
+    BotCommand(command="menu", description="打开控制台菜单"),
+    BotCommand(command="enroll", description="生成节点接入令牌"),
+    BotCommand(command="nodes", description="查看节点列表"),
+    BotCommand(command="node", description="查看节点详情"),
+    BotCommand(command="delete_node", description="删除节点并清理数据"),
+    BotCommand(command="traffic", description="查看近24小时流量"),
+    BotCommand(command="traffic_diag", description="诊断节点流量统计口径"),
+    BotCommand(command="daily", description="查看前一日流量日报"),
+    BotCommand(command="daily_time", description="查看或设置日报推送时间"),
+    BotCommand(command="quota", description="查看节点流量套餐"),
+    BotCommand(command="dns", description="打开 Cloudflare DNS 管理"),
+    BotCommand(command="dns_zones", description="列出可管理 DNS Zone"),
+    BotCommand(command="quota_monthly", description="设置按月流量套餐"),
+    BotCommand(command="quota_interval", description="设置按天循环套餐"),
+    BotCommand(command="quota_calibrate", description="校准节点已用流量"),
+    BotCommand(command="quota_clear", description="清除节点流量套餐"),
+]
+BOT_COMMAND_LANGUAGE_CODES = ("zh", "en")
 
 
 @dataclass(slots=True)
@@ -1737,6 +1761,37 @@ async def maintenance_loop(bot: Bot) -> None:
         await asyncio.sleep(settings.maintenance_interval_seconds)
 
 
+async def sync_bot_commands(bot: Bot) -> None:
+    global_scopes = (
+        BotCommandScopeDefault(),
+        BotCommandScopeAllPrivateChats(),
+    )
+    for scope in global_scopes:
+        for language_code in BOT_COMMAND_LANGUAGE_CODES:
+            await bot.delete_my_commands(
+                scope=scope,
+                language_code=language_code,
+            )
+        await bot.set_my_commands(BOT_COMMANDS, scope=scope)
+
+    await bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+    for admin_id in settings.admin_telegram_ids:
+        scope = BotCommandScopeChat(chat_id=admin_id)
+        try:
+            for language_code in BOT_COMMAND_LANGUAGE_CODES:
+                await bot.delete_my_commands(
+                    scope=scope,
+                    language_code=language_code,
+                )
+            await bot.set_my_commands(BOT_COMMANDS, scope=scope)
+            await bot.set_chat_menu_button(
+                chat_id=admin_id,
+                menu_button=MenuButtonCommands(),
+            )
+        except TelegramBadRequest as exc:
+            logger.warning("Unable to refresh command menu for admin %s: %s", admin_id, exc)
+
+
 async def run_polling() -> None:
     if not settings.bot_token:
         raise RuntimeError("PROXYPULSE_BOT_TOKEN is required to run the bot.")
@@ -1748,27 +1803,7 @@ async def run_polling() -> None:
     bot = Bot(token=settings.bot_token)
     dispatcher = Dispatcher()
     dispatcher.include_router(router)
-    await bot.set_my_commands(
-        [
-            BotCommand(command="start", description="打开控制台首页"),
-            BotCommand(command="menu", description="打开控制台菜单"),
-            BotCommand(command="enroll", description="生成节点接入令牌"),
-            BotCommand(command="nodes", description="查看节点列表"),
-            BotCommand(command="node", description="查看节点详情"),
-            BotCommand(command="delete_node", description="删除节点并清理数据"),
-            BotCommand(command="traffic", description="查看近24小时流量"),
-            BotCommand(command="traffic_diag", description="诊断节点流量统计口径"),
-            BotCommand(command="daily", description="查看前一日流量日报"),
-            BotCommand(command="daily_time", description="查看或设置日报推送时间"),
-            BotCommand(command="quota", description="查看节点流量套餐"),
-            BotCommand(command="dns", description="打开 Cloudflare DNS 管理"),
-            BotCommand(command="dns_zones", description="列出可管理 DNS Zone"),
-            BotCommand(command="quota_monthly", description="设置按月流量套餐"),
-            BotCommand(command="quota_interval", description="设置按天循环套餐"),
-            BotCommand(command="quota_calibrate", description="校准节点已用流量"),
-            BotCommand(command="quota_clear", description="清除节点流量套餐"),
-        ]
-    )
+    await sync_bot_commands(bot)
     maintenance_task = asyncio.create_task(maintenance_loop(bot))
     try:
         await dispatcher.start_polling(bot)
