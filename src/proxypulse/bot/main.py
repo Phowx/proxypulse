@@ -940,12 +940,6 @@ def render_node_card(card, *, display_name: str | None = None) -> str:
             f" · 内存 {html_code(format_scoped_value(node, 'memory', node.latest_memory_percent, format_metric_value))}"
             f" · 磁盘 {html_code(format_scoped_value(node, 'disk', node.latest_disk_percent, format_metric_value))}"
         ),
-        "<b>近 1 小时 · 均值 / 峰值</b>",
-        (
-            f"CPU {html_code(format_scoped_values(node, 'cpu', [card.trend_1h.avg_cpu_percent, card.trend_1h.peak_cpu_percent], lambda: format_avg_peak_values(card.trend_1h.avg_cpu_percent, card.trend_1h.peak_cpu_percent)))}"
-            f"\n内存 {html_code(format_scoped_values(node, 'memory', [card.trend_1h.avg_memory_percent, card.trend_1h.peak_memory_percent], lambda: format_avg_peak_values(card.trend_1h.avg_memory_percent, card.trend_1h.peak_memory_percent)))}"
-            f"\n磁盘 {html_code(format_scoped_values(node, 'disk', [card.trend_1h.avg_disk_percent, card.trend_1h.peak_disk_percent], lambda: format_avg_peak_values(card.trend_1h.avg_disk_percent, card.trend_1h.peak_disk_percent)))}"
-        ),
         (
             f"🧭 {html_code(format_scoped_value(node, 'cpu', node.latest_cpu_count, format_integer_value))} 核"
             f" · 负载 {html_code(format_scoped_value(node, 'cpu', node.latest_load_avg_1m, lambda value: f'{value:.2f}'))}"

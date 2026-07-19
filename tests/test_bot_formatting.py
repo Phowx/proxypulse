@@ -19,7 +19,7 @@ from proxypulse.bot.main import (
 )
 from proxypulse.core.config import CloudflareZoneConfig
 from proxypulse.services.cloudflare_dns import CloudflareDNSService
-from proxypulse.services.dashboard import NodeCardSummary, NodeTrendSummary
+from proxypulse.services.dashboard import NodeCardSummary
 from proxypulse.services.quota import QuotaStatus
 
 
@@ -179,17 +179,6 @@ class BotFormattingTests(TestCase):
         )
         card = NodeCardSummary(
             node=node,
-            trend_1h=NodeTrendSummary(
-                sample_count=0,
-                avg_cpu_percent=None,
-                peak_cpu_percent=None,
-                avg_memory_percent=None,
-                peak_memory_percent=None,
-                avg_disk_percent=None,
-                peak_disk_percent=None,
-                rx_bytes=0,
-                tx_bytes=0,
-            ),
             quota_status=QuotaStatus(
                 configured=False,
                 limit_bytes=None,
@@ -212,6 +201,8 @@ class BotFormattingTests(TestCase):
         self.assertIn("CPU <code>暂未上报</code>", rendered)
         self.assertNotIn("基础信息", rendered)
         self.assertNotIn("网络流量", rendered)
+        self.assertNotIn("近 1 小时", rendered)
+        self.assertNotIn("均值 / 峰值", rendered)
         self.assertNotIn("24h", rendered)
         self.assertNotIn("数据包", rendered)
         self.assertNotIn("活动告警", rendered)

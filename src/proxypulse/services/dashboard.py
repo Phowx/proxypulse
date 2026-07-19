@@ -54,7 +54,6 @@ class NodesOverviewSummary:
 @dataclass(slots=True)
 class NodeCardSummary:
     node: Node
-    trend_1h: NodeTrendSummary
     quota_status: QuotaStatus
 
 
@@ -214,7 +213,6 @@ async def build_nodes_dashboard(session: AsyncSession, nodes: list[Node]) -> tup
         cards.append(
             NodeCardSummary(
                 node=node,
-                trend_1h=await get_trend_summary(session, node.id, end_at=now, include_traffic=False),
                 quota_status=await get_quota_status(session, node, now=now),
             )
         )
