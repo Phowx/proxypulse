@@ -189,10 +189,14 @@ async def build_traffic_diagnosis(
     )
 
 
-def format_traffic_diagnosis(diagnosis: TrafficDiagnosis) -> str:
+def format_traffic_diagnosis(
+    diagnosis: TrafficDiagnosis,
+    *,
+    node_display_name: str | None = None,
+) -> str:
     node = diagnosis.node
     lines = [
-        f"<b>🧪 流量诊断 · {html.escape(node.name)}</b>",
+        f"<b>🧪 流量诊断 · {html.escape(node_display_name or node.name)}</b>",
         "<blockquote><b>当前口径</b>",
         f"状态 <code>{html.escape(node.status.value)}</code>",
         f"当前网卡 <code>{html.escape(_format_interface(diagnosis.current_interface))}</code>",

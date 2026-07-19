@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
@@ -340,7 +341,11 @@ async def summarize_previous_local_day(session: AsyncSession, today_local: date 
     return report_day, summary
 
 
-def format_traffic_summary(summary: TrafficSummary) -> str:
+def format_traffic_summary(
+    summary: TrafficSummary,
+    *,
+    node_display_names: Mapping[str, str] | None = None,
+) -> str:
     start_text = summary.start_at.astimezone(_local_tz()).strftime("%Y-%m-%d %H:%M")
     end_text = summary.end_at.astimezone(_local_tz()).strftime("%Y-%m-%d %H:%M")
     lines = [
@@ -356,8 +361,9 @@ def format_traffic_summary(summary: TrafficSummary) -> str:
 
     lines.extend(["", "<b>节点明细</b>"])
     for item in summary.node_summaries:
+        display_name = (node_display_names or {}).get(item.node_name, item.node_name)
         item_lines = [
-            f"<blockquote><b>🖥️ {html.escape(item.node_name)}</b>",
+            f"<blockquote><b>🖥️ {html.escape(display_name)}</b>",
             f"下行 <code>{format_bytes(item.rx_bytes)}</code> · 上行 <code>{format_bytes(item.tx_bytes)}</code>",
             f"合计 <code>{format_bytes(item.total_bytes)}</code>",
         ]

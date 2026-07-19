@@ -115,9 +115,12 @@ class TrafficDiagnosisFormattingTests(TestCase):
                     "has_multiple_interfaces": True,
                     "recent_samples": [],
                 },
-            )()
+            )(),
+            node_display_name="东京主节点",
         )
 
+        self.assertIn("流量诊断 · 东京主节点", diagnosis_text)
+        self.assertNotIn("流量诊断 · tokyo", diagnosis_text)
         self.assertIn("aggregate（汇总）", diagnosis_text)
         self.assertIn("aggregate 汇总口径", diagnosis_text)
         self.assertIn("RX+TX 合计", diagnosis_text)

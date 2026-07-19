@@ -128,19 +128,31 @@ class BotFormattingTests(TestCase):
         self.assertTrue(keyboard.is_persistent)
 
     def test_node_list_keyboard_groups_nodes_and_overview_actions(self) -> None:
-        keyboard = build_node_list_keyboard(["la163", "lagia", "tokyo", "hk01"])
+        keyboard = build_node_list_keyboard(
+            [
+                ("la163", "洛杉矶"),
+                ("lagia", "lagia"),
+                ("tokyo", "东京"),
+                ("hk01", "香港"),
+            ]
+        )
 
         self.assertIsNotNone(keyboard)
-        self.assertEqual([button.text for button in keyboard.inline_keyboard[0]], ["la163", "lagia"])
-        self.assertEqual([button.text for button in keyboard.inline_keyboard[1]], ["tokyo", "hk01"])
+        self.assertEqual([button.text for button in keyboard.inline_keyboard[0]], ["洛杉矶", "lagia"])
+        self.assertEqual([button.text for button in keyboard.inline_keyboard[1]], ["东京", "香港"])
+        self.assertEqual(
+            [button.callback_data for button in keyboard.inline_keyboard[0]],
+            ["node:la163", "node:lagia"],
+        )
         self.assertEqual([button.text for button in keyboard.inline_keyboard[2]], ["接入节点", "刷新"])
 
     def test_node_detail_keyboard_groups_context_actions(self) -> None:
         keyboard = build_node_detail_keyboard("lagia")
 
-        self.assertEqual([button.text for button in keyboard.inline_keyboard[0]], ["刷新", "流量诊断"])
-        self.assertEqual([button.text for button in keyboard.inline_keyboard[1]], ["套餐信息", "返回列表"])
-        self.assertEqual([button.text for button in keyboard.inline_keyboard[2]], ["🗑️ 删除节点"])
+        self.assertEqual([button.text for button in keyboard.inline_keyboard[0]], ["刷新", "重命名"])
+        self.assertEqual([button.text for button in keyboard.inline_keyboard[1]], ["流量诊断", "套餐信息"])
+        self.assertEqual([button.text for button in keyboard.inline_keyboard[2]], ["返回列表"])
+        self.assertEqual([button.text for button in keyboard.inline_keyboard[3]], ["🗑️ 删除节点"])
 
     def test_render_node_card_handles_missing_values(self) -> None:
         node = SimpleNamespace(
@@ -191,9 +203,10 @@ class BotFormattingTests(TestCase):
             ),
         )
 
-        rendered = render_node_card(card)
+        rendered = render_node_card(card, display_name="香港 & 备用")
 
-        self.assertIn("hk-01", rendered)
+        self.assertIn("香港 &amp; 备用", rendered)
+        self.assertNotIn("hk-01", rendered)
         self.assertIn("🔴 离线", rendered)
         self.assertIn("暂未上报", rendered)
         self.assertIn("CPU <code>暂未上报</code>", rendered)
@@ -246,6 +259,12 @@ class BotResponseTests(IsolatedAsyncioTestCase):
                 bot_main,
                 "summarize_previous_local_day",
                 AsyncMock(return_value=(date(2026, 4, 10), object())),
+            ),
+            patch.object(bot_main, "list_nodes", AsyncMock(return_value=[])),
+            patch.object(
+                bot_main,
+                "get_telegram_node_display_names",
+                AsyncMock(return_value={}),
             ),
             patch.object(bot_main, "format_traffic_summary", return_value="日报"),
         ):
@@ -356,6 +375,49 @@ class BotResponseTests(IsolatedAsyncioTestCase):
         self.assertIn("节点名称", message.answer.await_args.args[0])
         keyboard = message.answer.await_args.kwargs["reply_markup"]
         self.assertEqual(keyboard.inline_keyboard[0][0].text, "取消")
+
+    async def test_node_display_name_input_updates_alias_without_renaming_node(self) -> None:
+        class SessionContext:
+            async def __aenter__(self):
+                return object()
+
+            async def __aexit__(self, exc_type, exc, traceback):
+                return False
+
+        bot_main.BOT_SESSIONS[42] = bot_main.BotSession(
+            pending_input="node_display_name",
+            pending_node_name="tokyo",
+        )
+        node = SimpleNamespace(name="tokyo")
+        message = SimpleNamespace(
+            from_user=SimpleNamespace(id=42),
+            text="东京主节点",
+            answer=AsyncMock(),
+        )
+
+        with (
+            patch.object(bot_main, "settings", SimpleNamespace(admin_telegram_ids={42})),
+            patch.object(bot_main, "SessionLocal", return_value=SessionContext()),
+            patch.object(bot_main, "get_node_by_name", AsyncMock(return_value=node)),
+            patch.object(
+                bot_main,
+                "set_telegram_node_display_name",
+                AsyncMock(return_value="东京主节点"),
+            ) as set_display_name,
+            patch.object(
+                bot_main,
+                "render_node_detail",
+                AsyncMock(return_value=("节点详情", None)),
+            ),
+        ):
+            await bot_main.text_input_handler(message)
+
+        set_display_name.assert_awaited_once()
+        self.assertEqual(node.name, "tokyo")
+        self.assertIsNone(bot_main.BOT_SESSIONS[42].pending_input)
+        self.assertIsNone(bot_main.BOT_SESSIONS[42].pending_node_name)
+        self.assertIn("东京主节点", message.answer.await_args.args[0])
+        self.assertIn("节点详情", message.answer.await_args.args[0])
 
     async def test_hidden_menu_command_remains_compatible(self) -> None:
         message = SimpleNamespace(

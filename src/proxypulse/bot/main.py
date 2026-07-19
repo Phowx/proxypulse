@@ -79,6 +79,13 @@ from proxypulse.services.traffic_diagnostics import (
     build_traffic_diagnosis,
     format_traffic_diagnosis,
 )
+from proxypulse.services.telegram_node_names import (
+    TelegramNodeDisplayNameError,
+    clear_telegram_node_display_name,
+    get_telegram_node_display_name,
+    get_telegram_node_display_names,
+    set_telegram_node_display_name,
+)
 
 settings = get_settings()
 router = Router()
@@ -103,6 +110,8 @@ CALLBACK_COMMAND_HELP = "settings:help"
 CALLBACK_NODE_PREFIX = "node:"
 CALLBACK_NODE_DIAG_PREFIX = "node_diag:"
 CALLBACK_NODE_QUOTA_PREFIX = "node_quota:"
+CALLBACK_NODE_RENAME_PREFIX = "node_rename:"
+CALLBACK_NODE_RENAME_CLEAR_PREFIX = "node_rename_clear:"
 CALLBACK_NODE_DELETE_PREFIX = "node_delete:"
 CALLBACK_NODE_DELETE_CONFIRM_PREFIX = "node_delete_confirm:"
 CALLBACK_NODE_DELETE_CANCEL_PREFIX = "node_delete_cancel:"
@@ -170,7 +179,8 @@ class BotSession:
     selected_record_id: str | None = None
     draft: DnsDraft | None = None
     pending_action: DnsPendingAction | None = None
-    pending_input: Literal["enroll_name", "daily_time"] | None = None
+    pending_input: Literal["enroll_name", "daily_time", "node_display_name"] | None = None
+    pending_node_name: str | None = None
 
 
 BOT_SESSIONS: dict[int, BotSession] = {}
@@ -213,6 +223,7 @@ def reset_dns_session(user_id: int) -> BotSession:
     session.draft = None
     session.pending_action = None
     session.pending_input = None
+    session.pending_node_name = None
     return session
 
 
@@ -220,8 +231,14 @@ def cancel_active_flow(user_id: int) -> bool:
     session = BOT_SESSIONS.get(user_id)
     if session is None:
         return False
-    had_active_flow = bool(session.pending_input or session.draft or session.pending_action)
+    had_active_flow = bool(
+        session.pending_input
+        or session.pending_node_name
+        or session.draft
+        or session.pending_action
+    )
     session.pending_input = None
+    session.pending_node_name = None
     session.draft = None
     session.pending_action = None
     return had_active_flow
@@ -233,6 +250,14 @@ def begin_text_input(
 ) -> bool:
     cancelled = cancel_active_flow(user_id)
     get_bot_session(user_id).pending_input = pending_input
+    return cancelled
+
+
+def begin_node_display_name_input(user_id: int, node_name: str) -> bool:
+    cancelled = cancel_active_flow(user_id)
+    session = get_bot_session(user_id)
+    session.pending_input = "node_display_name"
+    session.pending_node_name = node_name
     return cancelled
 
 
@@ -599,12 +624,30 @@ def build_daily_time_prompt_text() -> str:
     )
 
 
+def build_node_display_name_prompt_text(node_name: str, display_name: str) -> str:
+    return (
+        f"<b>✏️ 节点显示名称 · {html.escape(display_name)}</b>\n"
+        + html_card(
+            "下一步",
+            [
+                f"内部标识 {html_code(node_name)}",
+                "请发送新的 Telegram 显示名称。",
+                "只改变 Telegram 中的显示，不影响 Agent、API 或历史数据。",
+                "最多 40 个字符。",
+            ],
+        )
+    )
+
+
 def _chunk_buttons(buttons: list[InlineKeyboardButton], size: int = 2) -> list[list[InlineKeyboardButton]]:
     return [buttons[index : index + size] for index in range(0, len(buttons), size)]
 
 
-def build_node_list_keyboard(node_names: list[str]) -> InlineKeyboardMarkup | None:
-    buttons = [InlineKeyboardButton(text=name, callback_data=f"{CALLBACK_NODE_PREFIX}{name}") for name in node_names]
+def build_node_list_keyboard(node_names: list[tuple[str, str]]) -> InlineKeyboardMarkup | None:
+    buttons = [
+        InlineKeyboardButton(text=display_name, callback_data=f"{CALLBACK_NODE_PREFIX}{node_name}")
+        for node_name, display_name in node_names
+    ]
     rows = _chunk_buttons(buttons)
     rows.append(
         [
@@ -620,10 +663,13 @@ def build_node_detail_keyboard(node_name: str) -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(text="刷新", callback_data=f"{CALLBACK_NODE_PREFIX}{node_name}"),
-                InlineKeyboardButton(text="流量诊断", callback_data=f"{CALLBACK_NODE_DIAG_PREFIX}{node_name}"),
+                InlineKeyboardButton(text="重命名", callback_data=f"{CALLBACK_NODE_RENAME_PREFIX}{node_name}"),
             ],
             [
+                InlineKeyboardButton(text="流量诊断", callback_data=f"{CALLBACK_NODE_DIAG_PREFIX}{node_name}"),
                 InlineKeyboardButton(text="套餐信息", callback_data=f"{CALLBACK_NODE_QUOTA_PREFIX}{node_name}"),
+            ],
+            [
                 InlineKeyboardButton(text="返回列表", callback_data=CALLBACK_SHOW_NODES),
             ],
             [
@@ -631,6 +677,25 @@ def build_node_detail_keyboard(node_name: str) -> InlineKeyboardMarkup:
             ],
         ]
     )
+
+
+def build_node_display_name_keyboard(
+    node_name: str,
+    *,
+    can_restore: bool,
+) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    if can_restore:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="恢复原名",
+                    callback_data=f"{CALLBACK_NODE_RENAME_CLEAR_PREFIX}{node_name}",
+                )
+            ]
+        )
+    rows.append([InlineKeyboardButton(text="取消", callback_data=CALLBACK_INPUT_CANCEL)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def build_node_delete_confirm_keyboard(node_name: str) -> InlineKeyboardMarkup:
@@ -866,7 +931,7 @@ def render_quota_detail_html(status) -> list[str]:
     return lines
 
 
-def render_node_card(card) -> str:
+def render_node_card(card, *, display_name: str | None = None) -> str:
     node = card.node
     body_lines = [
         "<b>资源</b>",
@@ -890,8 +955,9 @@ def render_node_card(card) -> str:
         "<b>套餐</b>",
         *render_overview_quota_html(card.quota_status),
     ]
+    display_name = display_name or node.name
     title = (
-        f"<b>🖥️ {html.escape(node.name)}</b>"
+        f"<b>🖥️ {html.escape(display_name)}</b>"
         f"  {format_status_label(node)} · {html.escape(format_relative_time(node.last_seen_at))}"
     )
     body = "\n".join(body_lines)
@@ -969,6 +1035,7 @@ async def render_nodes_response() -> tuple[str, InlineKeyboardMarkup | None]:
     async with SessionLocal() as session:
         nodes = await list_nodes(session)
         overview, cards = await build_nodes_dashboard(session, nodes)
+        display_names = await get_telegram_node_display_names(session, nodes)
 
     if not nodes:
         return "<b>📡 节点概览</b>\n当前还没有接入任何节点。", build_node_list_keyboard([])
@@ -978,8 +1045,10 @@ async def render_nodes_response() -> tuple[str, InlineKeyboardMarkup | None]:
         status_parts.append(f"🟡 待接入 {overview.pending_count}")
     lines = ["<b>📡 节点概览</b>", " · ".join(status_parts)]
     for card in cards:
-        lines.extend(["", render_node_card(card)])
-    return "\n".join(lines), build_node_list_keyboard([node.name for node in nodes])
+        lines.extend(["", render_node_card(card, display_name=display_names[card.node.name])])
+    return "\n".join(lines), build_node_list_keyboard(
+        [(node.name, display_names[node.name]) for node in nodes]
+    )
 
 
 async def render_node_detail(node_name: str) -> tuple[str, InlineKeyboardMarkup]:
@@ -988,25 +1057,30 @@ async def render_node_detail(node_name: str) -> tuple[str, InlineKeyboardMarkup]
         if node is None:
             quota_status = None
             detail_summary = None
+            display_name = node_name
         else:
             quota_status = await get_quota_status(session, node)
             detail_summary = await build_node_detail_summary(session, node)
+            display_name = await get_telegram_node_display_name(session, node)
     if node is None:
         return "未找到对应节点。", build_single_action_keyboard(CALLBACK_SHOW_NODES)
 
     title = (
-        f"<b>🖥️ {html.escape(node.name)}</b>  {format_status_label(node)}"
+        f"<b>🖥️ {html.escape(display_name)}</b>  {format_status_label(node)}"
         f" · {html.escape(format_relative_time(node.last_seen_at))}"
     )
+    identity_lines = [
+        f"主机 {html_code(format_scoped_value(node, 'identity', node.hostname, str))} · 系统 {html_code(format_scoped_value(node, 'identity', node.platform, str))}",
+        f"IP {html_code(format_scoped_value(node, 'identity', node.ips or None, lambda value: ', '.join(value)))}",
+        f"网卡 {html_code(format_scoped_value(node, 'network', node.latest_network_interface, format_network_interface_label))}",
+        f"采集 {html_code(format_collection_scope(node))}",
+    ]
+    if display_name != node.name:
+        identity_lines.insert(0, f"内部标识 {html_code(node.name)}")
     cards = [
         html_card(
             "基础信息",
-            [
-                f"主机 {html_code(format_scoped_value(node, 'identity', node.hostname, str))} · 系统 {html_code(format_scoped_value(node, 'identity', node.platform, str))}",
-                f"IP {html_code(format_scoped_value(node, 'identity', node.ips or None, lambda value: ', '.join(value)))}",
-                f"网卡 {html_code(format_scoped_value(node, 'network', node.latest_network_interface, format_network_interface_label))}",
-                f"采集 {html_code(format_collection_scope(node))}",
-            ],
+            identity_lines,
         ),
         html_card(
             "实时状态",
@@ -1042,13 +1116,19 @@ async def render_node_detail(node_name: str) -> tuple[str, InlineKeyboardMarkup]
 async def render_node_delete_confirm(node_name: str) -> tuple[str, InlineKeyboardMarkup]:
     async with SessionLocal() as session:
         node = await get_node_by_name(session, node_name)
+        display_name = (
+            await get_telegram_node_display_name(session, node)
+            if node is not None
+            else node_name
+        )
     if node is None:
         return "未找到对应节点。", build_single_action_keyboard(CALLBACK_SHOW_NODES)
     text = (
-        f"<b>🗑️ 删除节点 · {html.escape(node.name)}</b>\n"
+        f"<b>🗑️ 删除节点 · {html.escape(display_name)}</b>\n"
         + html_card(
             "影响范围",
             [
+                f"内部标识 {html_code(node.name)}",
                 "• 历史指标快照",
                 "• 流量套餐配置",
                 "",
@@ -1060,16 +1140,40 @@ async def render_node_delete_confirm(node_name: str) -> tuple[str, InlineKeyboar
     return text, build_node_delete_confirm_keyboard(node.name)
 
 
+async def render_node_display_name_prompt(
+    node_name: str,
+) -> tuple[str, InlineKeyboardMarkup]:
+    async with SessionLocal() as session:
+        node = await get_node_by_name(session, node_name)
+        if node is None:
+            return "未找到对应节点。", build_single_action_keyboard(CALLBACK_SHOW_NODES)
+        display_name = await get_telegram_node_display_name(session, node)
+    return (
+        build_node_display_name_prompt_text(node.name, display_name),
+        build_node_display_name_keyboard(
+            node.name,
+            can_restore=display_name != node.name,
+        ),
+    )
+
+
 async def render_traffic_response() -> tuple[str, InlineKeyboardMarkup]:
     async with SessionLocal() as session:
         summary = await summarize_recent_24h(session)
-    return format_traffic_summary(summary), build_single_action_keyboard(CALLBACK_SHOW_TRAFFIC)
+        nodes = await list_nodes(session)
+        display_names = await get_telegram_node_display_names(session, nodes)
+    return (
+        format_traffic_summary(summary, node_display_names=display_names),
+        build_single_action_keyboard(CALLBACK_SHOW_TRAFFIC),
+    )
 
 
 async def render_daily_response() -> tuple[str, InlineKeyboardMarkup | None]:
     async with SessionLocal() as session:
         _, summary = await summarize_previous_local_day(session)
-    return format_traffic_summary(summary), build_daily_keyboard()
+        nodes = await list_nodes(session)
+        display_names = await get_telegram_node_display_names(session, nodes)
+    return format_traffic_summary(summary, node_display_names=display_names), build_daily_keyboard()
 
 
 async def render_quota_response(node_name: str) -> str:
@@ -1078,7 +1182,8 @@ async def render_quota_response(node_name: str) -> str:
         if node is None:
             raise QuotaServiceError("未找到对应节点。")
         status = await get_quota_status(session, node)
-    return f"<b>🧾 套餐状态 · {html.escape(node_name)}</b>\n{html_card('流量套餐', render_quota_detail_html(status))}"
+        display_name = await get_telegram_node_display_name(session, node)
+    return f"<b>🧾 套餐状态 · {html.escape(display_name)}</b>\n{html_card('流量套餐', render_quota_detail_html(status))}"
 
 
 async def render_node_quota_management_response(node_name: str) -> str:
@@ -1112,7 +1217,8 @@ async def render_daily_schedule_response() -> str:
 async def render_traffic_diag_response(node_name: str) -> str:
     async with SessionLocal() as session:
         diagnosis = await build_traffic_diagnosis(session, node_name)
-    return format_traffic_diagnosis(diagnosis)
+        display_name = await get_telegram_node_display_name(session, diagnosis.node)
+    return format_traffic_diagnosis(diagnosis, node_display_name=display_name)
 
 
 async def render_dns_home() -> tuple[str, InlineKeyboardMarkup | None]:
@@ -1219,15 +1325,19 @@ def require_dns_session(user_id: int) -> BotSession:
 async def build_enrollment_response(node_name: str) -> str:
     async with SessionLocal() as session:
         node = await create_or_refresh_enrollment(session, node_name)
+        display_name = await get_telegram_node_display_name(session, node)
     agent_command = (
         f"PROXYPULSE_SERVER_URL={settings.server_url} "
         f"PROXYPULSE_AGENT_NAME={node.name} "
         f"PROXYPULSE_AGENT_ENROLLMENT_TOKEN={node.enrollment_token} "
         "python -m proxypulse.agent"
     )
+    enrollment_lines = [html_code(node.enrollment_token)]
+    if display_name != node.name:
+        enrollment_lines.insert(0, f"内部标识 {html_code(node.name)}")
     return (
-        f"<b>🔐 节点接入 · {html.escape(node.name)}</b>\n"
-        + html_card("接入令牌", [html_code(node.enrollment_token)])
+        f"<b>🔐 节点接入 · {html.escape(display_name)}</b>\n"
+        + html_card("接入令牌", enrollment_lines)
         + "\n\n"
         + html_card("Agent 启动命令", [html_code(agent_command)])
     )
@@ -1441,11 +1551,12 @@ async def quota_monthly_handler(message: Message, command: CommandObject) -> Non
                 minute=minute,
             )
             status = await get_quota_status(session, node)
+            display_name = await get_telegram_node_display_name(session, node)
     except (ValueError, QuotaServiceError) as exc:
         await message.answer(str(exc))
         return
     await message.answer(
-        f"<b>✅ 已设置每月流量套餐 · {html.escape(node_name)}</b>\n"
+        f"<b>✅ 已设置每月流量套餐 · {html.escape(display_name)}</b>\n"
         + html_card("当前套餐", render_quota_detail_html(status)),
         parse_mode="HTML",
     )
@@ -1476,11 +1587,12 @@ async def quota_interval_handler(message: Message, command: CommandObject) -> No
                 anchor_at=anchor_at,
             )
             status = await get_quota_status(session, node)
+            display_name = await get_telegram_node_display_name(session, node)
     except (ValueError, QuotaServiceError) as exc:
         await message.answer(str(exc))
         return
     await message.answer(
-        f"<b>✅ 已设置按天循环套餐 · {html.escape(node_name)}</b>\n"
+        f"<b>✅ 已设置按天循环套餐 · {html.escape(display_name)}</b>\n"
         + html_card("当前套餐", render_quota_detail_html(status)),
         parse_mode="HTML",
     )
@@ -1503,11 +1615,12 @@ async def quota_calibrate_handler(message: Message, command: CommandObject) -> N
                 raise QuotaServiceError("未找到对应节点。")
             await calibrate_quota_usage(session, node, used_gib=used_gib)
             status = await get_quota_status(session, node)
+            display_name = await get_telegram_node_display_name(session, node)
     except QuotaServiceError as exc:
         await message.answer(str(exc))
         return
     await message.answer(
-        f"<b>✅ 已校准已用流量 · {html.escape(node_name)}</b>\n"
+        f"<b>✅ 已校准已用流量 · {html.escape(display_name)}</b>\n"
         + html_card("当前套餐", render_quota_detail_html(status)),
         parse_mode="HTML",
     )
@@ -1527,10 +1640,14 @@ async def quota_clear_handler(message: Message, command: CommandObject) -> None:
             if node is None:
                 raise QuotaServiceError("未找到对应节点。")
             await clear_quota(session, node)
+            display_name = await get_telegram_node_display_name(session, node)
     except QuotaServiceError as exc:
         await message.answer(str(exc))
         return
-    await message.answer(f"<b>✅ 已清除流量套餐配置</b>\n节点 {html_code(node_name)}", parse_mode="HTML")
+    await message.answer(
+        f"<b>✅ 已清除流量套餐配置</b>\n节点 {html_code(display_name)}",
+        parse_mode="HTML",
+    )
 
 
 @router.message(Command("dns"))
@@ -1595,6 +1712,31 @@ async def text_input_handler(message: Message) -> None:
     value = (message.text or "").strip()
     if not value:
         await message.answer("输入不能为空，请重新发送。")
+        return
+
+    if session is not None and session.pending_input == "node_display_name":
+        node_name = session.pending_node_name
+        if not node_name:
+            cancel_active_flow(message.from_user.id)
+            await message.answer("重命名流程已过期，请重新进入节点详情。")
+            return
+        try:
+            async with SessionLocal() as db_session:
+                node = await get_node_by_name(db_session, node_name)
+                if node is None:
+                    raise TelegramNodeDisplayNameError("未找到对应节点。")
+                display_name = await set_telegram_node_display_name(db_session, node, value)
+        except TelegramNodeDisplayNameError as exc:
+            await message.answer(f"{exc}\n请重新发送显示名称，或使用 /cancel 取消。")
+            return
+        session.pending_input = None
+        session.pending_node_name = None
+        text, keyboard = await render_node_detail(node_name)
+        await message.answer(
+            f"<b>✅ Telegram 显示名称已更新：{html.escape(display_name)}</b>\n\n{text}",
+            parse_mode="HTML",
+            reply_markup=keyboard,
+        )
         return
 
     if session is not None and session.pending_input == "enroll_name":
@@ -2067,6 +2209,45 @@ async def dns_cancel_callback(callback: CallbackQuery) -> None:
     await safe_edit_callback_message(callback, text, keyboard)
 
 
+@router.callback_query(F.data.startswith(CALLBACK_NODE_RENAME_PREFIX))
+async def node_display_name_callback(callback: CallbackQuery) -> None:
+    if not callback.from_user or callback.from_user.id not in settings.admin_telegram_ids:
+        await callback.answer("无权访问。", show_alert=True)
+        return
+    node_name = callback.data[len(CALLBACK_NODE_RENAME_PREFIX) :]
+    text, keyboard = await render_node_display_name_prompt(node_name)
+    if text == "未找到对应节点。":
+        await safe_edit_callback_message(callback, text, keyboard)
+        return
+    begin_node_display_name_input(callback.from_user.id, node_name)
+    await safe_edit_callback_message(callback, text, keyboard)
+
+
+@router.callback_query(F.data.startswith(CALLBACK_NODE_RENAME_CLEAR_PREFIX))
+async def clear_node_display_name_callback(callback: CallbackQuery) -> None:
+    if not callback.from_user or callback.from_user.id not in settings.admin_telegram_ids:
+        await callback.answer("无权访问。", show_alert=True)
+        return
+    node_name = callback.data[len(CALLBACK_NODE_RENAME_CLEAR_PREFIX) :]
+    async with SessionLocal() as session:
+        node = await get_node_by_name(session, node_name)
+        if node is None:
+            await safe_edit_callback_message(
+                callback,
+                "未找到对应节点。",
+                build_single_action_keyboard(CALLBACK_SHOW_NODES),
+            )
+            return
+        await clear_telegram_node_display_name(session, node)
+    cancel_active_flow(callback.from_user.id)
+    text, keyboard = await render_node_detail(node_name)
+    await safe_edit_callback_message(
+        callback,
+        "✅ 已恢复原始节点名。\n\n" + text,
+        keyboard,
+    )
+
+
 @router.callback_query(F.data.startswith(CALLBACK_NODE_DIAG_PREFIX))
 async def node_diag_callback(callback: CallbackQuery) -> None:
     if not callback.from_user or callback.from_user.id not in settings.admin_telegram_ids:
@@ -2121,13 +2302,18 @@ async def delete_node_confirm_callback(callback: CallbackQuery) -> None:
     node_name = callback.data[len(CALLBACK_NODE_DELETE_CONFIRM_PREFIX) :]
     try:
         async with SessionLocal() as session:
+            existing_node = await get_node_by_name(session, node_name)
+            if existing_node is None:
+                raise NodeServiceError("未找到对应节点。")
+            display_name = await get_telegram_node_display_name(session, existing_node)
+            await clear_telegram_node_display_name(session, existing_node, commit=False)
             node = await delete_node_by_name(session, node_name)
     except NodeServiceError as exc:
         await safe_edit_callback_message(callback, html_error("节点操作", exc), build_single_action_keyboard(CALLBACK_SHOW_NODES))
         return
     text, keyboard = await render_nodes_response()
     if callback.message is not None:
-        await callback.message.answer(f"✅ 已删除节点：{node.name}")
+        await callback.message.answer(f"✅ 已删除节点：{display_name}")
     await safe_edit_callback_message(callback, text, keyboard)
 
 
@@ -2153,7 +2339,9 @@ async def maybe_send_daily_report(bot: Bot) -> None:
             return
         _, summary = await summarize_previous_local_day(session, today_local=local_now.date())
 
-        text = format_traffic_summary(summary)
+        nodes = await list_nodes(session)
+        display_names = await get_telegram_node_display_names(session, nodes)
+        text = format_traffic_summary(summary, node_display_names=display_names)
         for admin_id in settings.admin_telegram_ids:
             await bot.send_message(admin_id, text, parse_mode="HTML")
         mark_daily_report_run(session, report_day)

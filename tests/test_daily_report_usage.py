@@ -81,3 +81,10 @@ class DailyReportUsageTests(IsolatedAsyncioTestCase):
         self.assertIn("重置 <code>30 天后</code>", rendered)
         self.assertNotIn("本月累计", rendered)
         self.assertNotIn("<pre>", rendered)
+
+        aliased_rendered = format_traffic_summary(
+            summary,
+            node_display_names={"tokyo": "东京主节点"},
+        )
+        self.assertIn("东京主节点", aliased_rendered)
+        self.assertNotIn(">tokyo<", aliased_rendered)
