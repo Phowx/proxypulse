@@ -125,7 +125,7 @@ class BotFormattingTests(TestCase):
         )
         self.assertTrue(keyboard.resize_keyboard)
         self.assertFalse(keyboard.one_time_keyboard)
-        self.assertFalse(keyboard.is_persistent)
+        self.assertTrue(keyboard.is_persistent)
 
     def test_node_list_keyboard_groups_nodes_and_overview_actions(self) -> None:
         keyboard = build_node_list_keyboard(["la163", "lagia", "tokyo", "hk01"])

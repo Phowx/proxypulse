@@ -522,7 +522,7 @@ def build_dashboard_keyboard() -> ReplyKeyboardMarkup:
         ],
         resize_keyboard=True,
         one_time_keyboard=False,
-        is_persistent=False,
+        is_persistent=True,
         input_field_placeholder="选择功能或输入命令",
     )
 
